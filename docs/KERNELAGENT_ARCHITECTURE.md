@@ -68,6 +68,15 @@ records. The planned integration should reuse `AutoKernelRouter` and add the
 official evaluator call around its returned kernel, rather than rebuilding
 kernel generation.
 
+The implemented `kernelbench_runner/` follows that boundary: it calls
+`AutoKernelRouter`, adapts `kernel_function(...)` to `ModelNew`, and runs the
+official KernelBench evaluator in a separate process with a per-task timeout.
+It records upstream artifacts and results without changing either project's
+correctness evaluator. A configured `OPENAI_BASE_URL` selects the
+OpenAI-compatible provider for custom model IDs; the runner copies the API key
+from the configured environment-variable name into `OPENAI_API_KEY` only in
+the child process environment.
+
 ## Hardware-guided optimization path
 
 ```text

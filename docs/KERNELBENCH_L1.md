@@ -100,6 +100,38 @@ summary under a run directory. Generation and official evaluation remain
 separate phases so failures can be attributed to KernelAgent generation,
 compilation, execution, correctness, or timing.
 
+The implementation is `kernelbench_runner/` and the CLI is
+`python -m kernelbench_runner.cli` (also installed as `kernelbench-l1`). The
+example configuration is `configs/kernelbench_l1.example.json`. It contains a
+model name, OpenAI-compatible API base URL, API-key environment variable name,
+KernelBench path, output path, search budget, beam width, task selection, GPU
+ID, CPU-worker limit, trial counts, and random seed. The runner maps the
+configured API-key environment variable to KernelAgent's `OPENAI_API_KEY` only
+in its child environment; the key value is not accepted in or written to JSON.
+
+Example task-selection commands (run on the A30 server only):
+
+```bash
+python -m kernelbench_runner.cli --config configs/kernelbench_l1.example.json --task-id 19
+python -m kernelbench_runner.cli --config configs/kernelbench_l1.example.json --task-range 1:10
+python -m kernelbench_runner.cli --config configs/kernelbench_l1.example.json --all
+```
+
+Each experiment directory has `config.json`, `task_results.jsonl`,
+`kernels/<task>/` (generated function, `ModelNew` wrapper, task result, and
+KernelBench result), and `logs/<task>/` (generation/evaluation output). Result
+latencies use milliseconds and KernelBench result metadata is retained. The
+current KernelAgent API does not report aggregate LLM calls, so `llm_calls` is
+`null`; candidate counts are also `null` when the selected upstream route does
+not expose them. `beam_width` is recorded for the baseline configuration but
+does not activate OptimizationManager beam search in this generation runner.
+
+The wrapper currently instantiates the original task model with the same init
+inputs and forwards its parameters/buffers when `kernel_function` declares
+additional required positional arguments. This is a thin, provisional
+adapter; verify it on A30 for tasks with module parameters, scalar arguments,
+and unusual signatures before starting a full L1 run.
+
 ## Server verification
 
 - **TODO(server verification):** validate that generated Fuser signatures and

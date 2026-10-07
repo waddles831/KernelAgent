@@ -14,8 +14,9 @@
 
 """Base provider for OpenAI-compatible APIs."""
 
-from typing import Any
+import os
 import logging
+from typing import Any
 from .base import BaseProvider, LLMResponse
 from .env_config import configure_proxy_environment
 
@@ -48,8 +49,9 @@ class OpenAICompatibleProvider(BaseProvider):
             self._original_proxy_env = configure_proxy_environment()
 
             # Initialize client (proxy configured via environment variables)
-            if self.base_url:
-                self.client = OpenAI(api_key=api_key, base_url=self.base_url)
+            base_url = self.base_url or os.getenv("OPENAI_BASE_URL")
+            if base_url:
+                self.client = OpenAI(api_key=api_key, base_url=base_url)
             else:
                 self.client = OpenAI(api_key=api_key)
 

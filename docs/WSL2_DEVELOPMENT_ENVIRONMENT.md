@@ -11,9 +11,11 @@ development environment uses it:
 python3.12 -m venv .venv
 ./.venv/bin/python -m pip install --upgrade pip
 ./.venv/bin/python -m pip install 'pytest>=7.0.0' pytest-cov
+./.venv/bin/python -m pip install -e . --no-deps
 ```
 
-The current development virtual environment contains only the tools listed in
+The current development virtual environment contains the editable KernelAgent
+package without its runtime dependency set, plus only the tools listed in
 KernelAgent's `[project.optional-dependencies].dev` group. It does not install
 KernelAgent's runtime/UI dependencies, PyTorch, Triton, CUDA, or KernelBench's
 experiment dependencies. `.venv/` is ignored by Git.

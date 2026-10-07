@@ -48,6 +48,7 @@ kernel-agent = "scripts.triton_ui:main"
 list-models = "scripts.list_models:main"
 optimization-ui = "scripts.optimization_ui:main"
 pipeline-ui = "scripts.pipeline_ui:main"
+kernelbench-l1 = "kernelbench_runner.cli:main"
 
 [project.urls]
 "Homepage" = "https://github.com/pytorch-labs/KernelAgent"
@@ -55,7 +56,14 @@ pipeline-ui = "scripts.pipeline_ui:main"
 "Repository" = "https://github.com/pytorch-labs/KernelAgent"
 
 [tool.setuptools.packages.find]
-include = ["triton_kernel_agent*", "kernel_perf_agent*", "Fuser*", "scripts", "utils"]
+include = [
+    "triton_kernel_agent*",
+    "kernel_perf_agent*",
+    "Fuser*",
+    "scripts",
+    "utils",
+    "kernelbench_runner*",
+]
 
 [tool.setuptools]
 include-package-data = true

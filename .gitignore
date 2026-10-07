@@ -124,6 +124,8 @@ kernel.py
 test_kernel.py
 final_test.py
 *_kernel.py
+runs/
+.optimize/
 
 # IDE
 .vscode/

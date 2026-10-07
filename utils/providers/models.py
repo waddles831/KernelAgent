@@ -15,6 +15,7 @@
 """Model registry and configuration for KernelAgent."""
 
 from typing import Type
+import os
 
 from .base import BaseProvider
 from .model_config import ModelConfig
@@ -69,13 +70,24 @@ def get_model_provider(
     """
     model_name_to_config = _get_model_name_to_config()
     if model_name not in model_name_to_config:
-        # Default to RelayProvider for unknown models
-        from .relay_provider import RelayProvider
+        # A configured OpenAI-compatible endpoint can serve arbitrary model IDs
+        # (for example, a self-hosted gateway). Preserve RelayProvider as the
+        # default when no OpenAI-compatible endpoint is configured.
+        if os.environ.get("OPENAI_BASE_URL"):
+            from .openai_provider import OpenAIProvider
+
+            providers = [OpenAIProvider]
+        else:
+            from .relay_provider import RelayProvider
+
+            providers = [RelayProvider]
 
         model_config = ModelConfig(
             name=model_name,
-            provider_classes=[RelayProvider],
-            description=f"Unknown model '{model_name}' (defaulting to Relay)",
+            provider_classes=providers,
+            description=(
+                f"Unknown model '{model_name}' (using {providers[0].__name__})"
+            ),
         )
     else:
         model_config = model_name_to_config[model_name]
@@ -92,6 +104,18 @@ def get_model_provider(
         providers_to_try = [preferred_provider]
     else:
         providers_to_try = model_config.provider_classes
+
+    # Explicit OpenAI-compatible endpoint configuration should win over a
+    # model's default relay ordering when both providers are available.
+    if preferred_provider is None and os.environ.get("OPENAI_BASE_URL"):
+        from .openai_provider import OpenAIProvider
+
+        if OpenAIProvider in providers_to_try:
+            providers_to_try = [OpenAIProvider] + [
+                provider
+                for provider in providers_to_try
+                if provider is not OpenAIProvider
+            ]
 
     # Try each provider and return the first available one
     for provider_class in providers_to_try:
