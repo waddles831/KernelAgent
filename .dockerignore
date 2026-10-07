@@ -1,0 +1,13 @@
+.git
+.venv
+.env
+.env.*
+!.env.example
+runs
+.optimize
+__pycache__
+.pytest_cache
+.mypy_cache
+.ruff_cache
+*.py[cod]
+node_modules
