@@ -335,6 +335,7 @@ def run(
     max_iters: int = 10,
     no_cusolver: bool = False,
     test_timeout_s: int = 30,
+    retrieval_context: str | None = None,
 ) -> Path:
     """Dispatch subgraphs to KernelAgent with optional parallelism.
 
@@ -373,6 +374,7 @@ def run(
             target_platform=platform,
             no_cusolver=no_cusolver,
             test_timeout_s=test_timeout_s,
+            retrieval_context=retrieval_context,
         )
         try:
             result = local_agent.generate_kernel(

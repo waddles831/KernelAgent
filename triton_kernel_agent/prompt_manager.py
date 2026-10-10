@@ -169,6 +169,7 @@ class PromptManager:
         test_code: str,
         triton_guidelines: str | None = None,
         no_cusolver: bool = False,
+        retrieval_context: str | None = None,
     ) -> str:
         """
         Render the kernel generation prompt.
@@ -178,6 +179,9 @@ class PromptManager:
             test_code: Test code that the kernel must pass
             triton_guidelines: Optional guidelines (if None, loads from template)
             no_cusolver: If True, disables cuSolver library usage
+            retrieval_context: Optional measured cross-task experience block,
+                rendered separately from static guidelines.  ``None`` preserves
+                the original prompt byte-for-byte.
 
         Returns:
             Rendered prompt string
@@ -194,6 +198,7 @@ class PromptManager:
             triton_guidelines=triton_guidelines,
             kernel_guidance=self.target_platform.kernel_guidance,
             no_cusolver=no_cusolver,
+            retrieval_context=retrieval_context,
         )
 
     def render_kernel_refinement_prompt(

@@ -76,6 +76,10 @@ CRITICAL REQUIREMENTS - NO CHEATING ALLOWED:
 {{ kernel_guidance }}
 {% endif %}
 
+{% if retrieval_context %}
+{{ retrieval_context }}
+{% endif %}
+
 Example structure (wrapper can use PyTorch, but kernel must use Triton):
 ```python
 import triton

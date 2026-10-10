@@ -156,6 +156,39 @@ def _read_json(path: Path) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
 
+def _generation_session_dirs(agent_metadata: dict[str, Any] | None) -> list[Path]:
+    """Locate KernelAgent generation sessions for either route.
+
+    Direct route: ``details.session_dir``.
+    Fuser route: each subgraph in ``details.kernels_summary`` has its own
+    ``session_dir``.  Duplicates are removed while preserving order.
+    """
+    details = (agent_metadata or {}).get("details") or {}
+    candidates: list[str] = []
+    direct = details.get("session_dir")
+    if direct:
+        candidates.append(str(direct))
+
+    summary_path = details.get("kernels_summary")
+    if summary_path and Path(summary_path).is_file():
+        try:
+            items = json.loads(Path(summary_path).read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            items = None
+        if isinstance(items, list):
+            for item in items:
+                if isinstance(item, dict) and item.get("session_dir"):
+                    candidates.append(str(item["session_dir"]))
+
+    seen: set[str] = set()
+    result: list[Path] = []
+    for candidate in candidates:
+        if candidate not in seen:
+            seen.add(candidate)
+            result.append(Path(candidate))
+    return result
+
+
 def _positive_float(value: Any) -> float | None:
     try:
         parsed = float(value)
@@ -279,6 +312,7 @@ def _ingest_task_memory(
     optimization_metadata: dict[str, Any] | None,
     compatibility: dict[str, Any],
     write_store,
+    generation_retrievals_path: Path | None = None,
 ) -> dict[str, Any]:
     """Normalize and persist this task's memory evidence.
 
@@ -298,6 +332,13 @@ def _ingest_task_memory(
         retrieval_records = collector.read_jsonl(
             Path(evidence_dir) / "optimization_retrievals.jsonl"
         )
+    generation_retrieval_count = 0
+    if generation_retrievals_path is not None and Path(
+        generation_retrievals_path
+    ).exists():
+        generation_retrievals = collector.read_jsonl(generation_retrievals_path)
+        generation_retrieval_count = len(generation_retrievals)
+        retrieval_records.extend(generation_retrievals)
 
     memory_versions = sorted(
         {
@@ -327,8 +368,7 @@ def _ingest_task_memory(
 
     generation_count = 0
     if memory_config.record_generation_traces and agent_metadata:
-        session_dir = (agent_metadata.get("details") or {}).get("session_dir")
-        if session_dir:
+        for session_dir in _generation_session_dirs(agent_metadata):
             generation_records = collector.generation_attempt_records_from_session(
                 session_dir,
                 run_id=run_id,
@@ -338,7 +378,7 @@ def _ingest_task_memory(
                 compatibility=compatibility,
                 memory_version=memory_version_used,
             )
-            generation_count = len(generation_records)
+            generation_count += len(generation_records)
             attempt_records.extend(generation_records)
 
     task_record = collector.task_result_record_from_result(
@@ -365,6 +405,7 @@ def _ingest_task_memory(
         "attempt_records": len(attempt_records),
         "optimization_attempts": len(attempt_records) - generation_count,
         "generation_attempts": generation_count,
+        "generation_retrieval_records": generation_retrieval_count,
         "retrieval_records": len(retrieval_records),
     }
 
@@ -453,6 +494,23 @@ def run_experiment(
         modelnew_path = task_artifacts / "ModelNew.py"
         evaluation_path = task_artifacts / "kernelagent_benchmark_result.json"
 
+        child_memory_path: Path | None = None
+        generation_retrievals_path: Path | None = None
+        if memory_config is not None:
+            child_memory_path = task_artifacts / "memory_config.json"
+            child_memory_path.write_text(
+                json.dumps(
+                    _child_memory_payload(memory_config),
+                    indent=2,
+                    ensure_ascii=False,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            generation_retrievals_path = (
+                task_artifacts / "generation_memory_retrievals.jsonl"
+            )
+
         started = time.perf_counter()
         generation_timed_out = False
         optimization_timed_out = False
@@ -485,6 +543,25 @@ def run_experiment(
             "--metadata-output",
             str(agent_metadata_path),
         ]
+        if (
+            memory_config is not None
+            and memory_config.retrieval_enabled()
+            and child_memory_path is not None
+        ):
+            generation_command.extend(
+                [
+                    "--memory-config",
+                    str(child_memory_path),
+                    "--memory-retrievals-output",
+                    str(generation_retrievals_path),
+                    "--run-id",
+                    run_id,
+                    "--task-id",
+                    str(task_id),
+                    "--task-name",
+                    task_name,
+                ]
+            )
         generation_code, generation_timed_out = _run_child(
             generation_command,
             cwd=REPO_ROOT,
@@ -536,17 +613,7 @@ def run_experiment(
             ]
             for architecture in config.gpu_arch:
                 optimization_command.extend(["--gpu-arch", architecture])
-            if memory_config is not None:
-                child_memory_path = task_artifacts / "memory_config.json"
-                child_memory_path.write_text(
-                    json.dumps(
-                        _child_memory_payload(memory_config),
-                        indent=2,
-                        ensure_ascii=False,
-                    )
-                    + "\n",
-                    encoding="utf-8",
-                )
+            if memory_config is not None and child_memory_path is not None:
                 optimization_command.extend(
                     [
                         "--memory-config",
@@ -721,6 +788,14 @@ def run_experiment(
                 "optimized_kernel_function": str(
                     task_artifacts / "kernel_function_optimized.py"
                 ),
+                "memory_config": (
+                    str(child_memory_path) if child_memory_path is not None else ""
+                ),
+                "generation_memory_retrievals": (
+                    str(generation_retrievals_path)
+                    if generation_retrievals_path is not None
+                    else ""
+                ),
             },
         )
         result_path = task_artifacts / "task_result.json"
@@ -741,6 +816,7 @@ def run_experiment(
                     optimization_metadata=optimization_metadata,
                     compatibility=compatibility,
                     write_store=write_store,
+                    generation_retrievals_path=generation_retrievals_path,
                 )
                 result.metadata["memory"] = memory_info
             except Exception as exc:  # memory must not break the run

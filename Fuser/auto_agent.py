@@ -351,6 +351,7 @@ class AutoKernelRouter:
         no_cusolver: bool = False,
         test_timeout_s: int = 30,
         test_code: str | None = None,
+        retrieval_context: str | None = None,
     ) -> None:
         self.ka_model = ka_model
         self.ka_num_workers = ka_num_workers
@@ -378,6 +379,9 @@ class AutoKernelRouter:
         self.no_cusolver = no_cusolver
         self.test_timeout_s = test_timeout_s
         self.test_code = test_code
+        # Optional measured cross-task experience injected into generation
+        # prompts (both direct KernelAgent and Fuser subgraph dispatch).
+        self.retrieval_context = retrieval_context
 
     def _solve_with_kernelagent(
         self, problem_code: str, test_code: str | None = None
@@ -390,6 +394,7 @@ class AutoKernelRouter:
             target_platform=self.platform_config,
             no_cusolver=self.no_cusolver,
             test_timeout_s=self.run_timeout_s,
+            retrieval_context=self.retrieval_context,
         )
         try:
             # Ensure exceptions in KernelAgent do not abort routing; return a structured failure
@@ -455,6 +460,7 @@ class AutoKernelRouter:
                 compose_max_iters=self.compose_max_iters,
                 target_platform=self.platform_config.name,
                 test_timeout_s=self.test_timeout_s,
+                retrieval_context=self.retrieval_context,
             )
         except BaseException as exc:  # catch SystemExit and others
             # Return a structured failure so caller can decide on fallback

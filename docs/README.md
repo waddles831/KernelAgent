@@ -231,23 +231,31 @@ $PY -m kernelbench_runner.memory_cli snapshot --store memory \
   --dest memory_snapshots/source_v1 --label source_v1
 ```
 
-Retrieval is wired into the **optimization** stage (after the bottleneck
-diagnosis, before the optimization prompt). It is therefore only active when
-`--optimize` is also on. Static RAG examples and measured memory are rendered as
-separate prompt blocks. Seed-generation memory is not implemented.
+Retrieval is wired into **both** prompt-construction sites: seed generation
+(before any seed exists, using only source-derived features with
+`bottleneck=unknown`) and the optimization stage (after the bottleneck
+diagnosis). It is therefore active even with `--optimize` off, which is what
+makes the memory factor independent of `optimize`. Static RAG examples and
+measured memory are rendered as separate prompt blocks. When NCU is
+unavailable, generation-arm memory carries internal-test evidence only (no
+parent-relative performance or profile); see `docs/MEMORY_INTEGRATION_NOTES.md`.
 
-Control configs (no secrets; set `model`/`api_*` for your server):
+Control configs (no secrets; set `model`/`api_*` for your server). The
+`O+` rows need NCU; the `O-` row runs without it:
 
-- `configs/memory_control_off.json` — control, memory off.
-- `configs/memory_source_collect.json` — build source-task memory.
-- `configs/memory_frozen_unseen_eval.json` — frozen memory on disjoint
-  held-out tasks.
-- `configs/memory_continual_retest.json` — continual update, existing-task
-  retest (report separately from unseen-task transfer).
+| Arm | Config | optimize | memory |
+| --- | --- | --- | --- |
+| O- M- | `configs/memory_gen_off.json` | off | off |
+| O- M+ | `configs/memory_gen_frozen.json` | off | frozen (generation retrieval) |
+| O+ M- | `configs/memory_control_off.json` | on | off |
+| O+ M+ | `configs/memory_frozen_unseen_eval.json` | on | frozen |
+| source | `configs/memory_source_collect.json` | on | collect |
+| reuse | `configs/memory_continual_retest.json` | on | continual |
 
-These configs are templates; running them is a separate, explicitly-started GPU
-experiment. See `docs/MEMORY_INTEGRATION_NOTES.md` for the schema, anti-leakage
-rules, and what is implemented versus planned.
+Frozen arms read `memory_snapshots/source_v1`, built from the source config via
+`memory_cli snapshot`. These configs are templates; running them is a separate,
+explicitly-started GPU experiment. See `docs/MEMORY_INTEGRATION_NOTES.md` for the
+schema, anti-leakage rules, and what is implemented versus planned.
 
 ## Hard rules
 

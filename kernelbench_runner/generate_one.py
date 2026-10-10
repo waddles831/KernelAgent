@@ -26,6 +26,48 @@ def _json_safe(value: Any) -> Any:
     return str(value)
 
 
+def _build_generation_memory(args) -> tuple[Any, str | None]:
+    """Build a read-only memory bridge and retrieve seed-generation context.
+
+    Returns ``(bridge_or_None, context_or_None)``.  Retrieval happens before any
+    seed exists, so only source-derived task features are known and the
+    bottleneck is explicitly ``unknown`` (never a profiled parent).
+    """
+    if not args.memory_config:
+        return None, None
+    path = Path(args.memory_config)
+    if not path.exists():
+        return None, None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None, None
+    if not isinstance(payload, dict) or (payload.get("mode") or "off") == "off":
+        return None, None
+
+    from kernel_memory.features import extract_task_features
+    from kernel_memory.integration import MemoryBridge, detect_environment
+
+    payload = dict(payload)
+    payload["run_id"] = args.run_id
+    payload["task_id"] = args.task_id
+    payload["task_name"] = args.task_name
+    payload["task_features"] = extract_task_features(args.problem.resolve())
+    payload["compatibility"] = detect_environment(model=args.model)
+    payload["phase"] = "generation"
+
+    bridge = MemoryBridge(payload)
+    if not bridge.enabled:
+        return bridge, None
+    context = bridge.build_context(
+        bottleneck_category="unknown",
+        bottleneck_summary="seed generation (no profile available)",
+        round_num=0,
+        worker_id=None,
+    )
+    return bridge, (context or None)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--problem", required=True, type=Path)
@@ -37,10 +79,25 @@ def main() -> int:
     parser.add_argument("--test-timeout-s", required=True, type=int)
     parser.add_argument("--kernel-output", required=True, type=Path)
     parser.add_argument("--metadata-output", required=True, type=Path)
+    parser.add_argument(
+        "--memory-config",
+        type=Path,
+        default=None,
+        help="Optional JSON memory configuration for seed-generation retrieval",
+    )
+    parser.add_argument("--memory-retrievals-output", type=Path, default=None)
+    parser.add_argument("--run-id", default="unknown")
+    parser.add_argument("--task-id", type=int, default=-1)
+    parser.add_argument("--task-name", default="task")
     args = parser.parse_args()
 
     metadata: dict[str, Any] = {"success": False, "route": None, "details": {}}
+    bridge = None
     try:
+        # Retrieve before constructing the router so the context reaches both
+        # the direct KernelAgent and Fuser routes.
+        bridge, retrieval_context = _build_generation_memory(args)
+
         # Import after the parent process has selected CUDA_VISIBLE_DEVICES.
         from Fuser.auto_agent import AutoKernelRouter
 
@@ -64,6 +121,7 @@ def main() -> int:
             target_platform="cuda",
             ignore_router_config=True,
             use_router_cache=False,
+            retrieval_context=retrieval_context,
         )
         result = router.solve(args.problem.resolve())
         metadata = {
@@ -99,6 +157,13 @@ def main() -> int:
         }
 
     args.metadata_output.parent.mkdir(parents=True, exist_ok=True)
+    if bridge is not None:
+        metadata["memory"] = _json_safe(bridge.summary())
+        if args.memory_retrievals_output is not None:
+            args.memory_retrievals_output.parent.mkdir(parents=True, exist_ok=True)
+            with args.memory_retrievals_output.open("w", encoding="utf-8") as handle:
+                for record in bridge.retrieval_records:
+                    handle.write(json.dumps(_json_safe(record)) + "\n")
     args.metadata_output.write_text(
         json.dumps(_json_safe(metadata), indent=2, ensure_ascii=False) + "\n",
         encoding="utf-8",

@@ -58,6 +58,7 @@ def run_pipeline(
     compose_max_iters: int = 5,
     target_platform: str = "cuda",
     test_timeout_s: int = 30,
+    retrieval_context: str | None = None,
 ) -> dict:
     # Select default KernelAgent model if not provided: prefer GPT-5 for Level 2/3
     if dispatch_model is None:
@@ -114,6 +115,7 @@ def run_pipeline(
         target_platform=target_platform,
         max_iters=max_iters,
         test_timeout_s=test_timeout_s,
+        retrieval_context=retrieval_context,
     )
 
     # Step 3: compose end-to-end

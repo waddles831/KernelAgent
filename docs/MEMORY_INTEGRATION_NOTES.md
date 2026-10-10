@@ -38,10 +38,15 @@ the exact file/CLI surface.
   `rag_context`. The manager is the single writer of the raw trajectory
   (`attempts` + `reflexions` for every worker, success/regression/failure),
   stored to `optimization_attempts.jsonl`/`optimization_retrievals.jsonl`.
+- **Generation**: seed generation retrieves measured experience before any seed
+  exists (`bottleneck="unknown"`, source-derived features only) and injects a
+  separately-labeled block into the generation prompt via
+  `AutoKernelRouter`/`TritonKernelAgent`; this makes the memory factor
+  independent of `optimize` (see the seed-generation section below).
 - **Runner**: `kernelbench_runner.runner` builds/reads the store, passes a
-  child memory config to `optimize_one`, and ingests the trajectory plus the
-  final project-evaluator `task_result` record. Existing-task retest and
-  unseen-task transfer are separated by the anti-leakage rule below.
+  child memory config to `generate_one` and `optimize_one`, and ingests the
+  trajectory plus the final project-evaluator `task_result` record. Existing-task
+  retest and unseen-task transfer are separated by the anti-leakage rule below.
 - **Config/CLI**: `RunnerConfig` memory fields; `--memory-mode`,
   `--memory-dir`, `--memory-snapshot-dir`, `--memory-max-items`,
   `--memory-prompt-budget-chars`, `--memory-include-failures`,
@@ -49,10 +54,10 @@ the exact file/CLI surface.
   Offline tooling: `python -m kernelbench_runner.memory_cli
   {inspect,inspect-runs,report,summarize,snapshot}`.
 - **Tests**: `tests/test_memory_*.py` (store, features, summary, retrieval,
-  integration, configs) run on CPU with memory off by default.
+  integration, generation, configs) run on CPU with memory off by default.
 - **Control configs**: `configs/memory_control_off.json`,
   `memory_source_collect.json`, `memory_frozen_unseen_eval.json`,
-  `memory_continual_retest.json`.
+  `memory_continual_retest.json`, `memory_gen_off.json`, `memory_gen_frozen.json`.
 
 ### Enforced anti-leakage rules
 
@@ -80,13 +85,37 @@ the exact file/CLI surface.
 
 ### Not yet implemented (Planned)
 
-- Seed-generation memory integration (`generate_one.py`, `AutoKernelRouter`,
-  Fuser route propagation). Generation traces are optionally collected as
-  internal-test-only evidence but not retrieved.
 - Continual-update and frozen-memory **results** on A30 (no GPU/full-baseline
   run has been performed for memory; see below).
 - LLM-authored strategy lessons (the summary builder is rule-based only).
 - Multi-kernel attribution beyond the single-kernel-scope caveat.
+- Fuser `run_dir` **worker-state** parsing: generation evidence is now collected
+  from the KernelAgent `session_dir` of both the direct route and each Fuser
+  subgraph (`kernels_out/summary.json`), but the Fuser orchestrator/worker
+  `state.json` traces themselves are not yet parsed.
+
+## Seed-generation retrieval (implemented; enables the `O-` ablation row)
+
+Retrieval is now wired into **both** prompt-construction sites:
+
+1. **Seed generation** (`kernelbench_runner/generate_one.py` →
+   `AutoKernelRouter` → `TritonKernelAgent._generate_kernel_seeds()`), before
+   any seed exists. Because there is no parent kernel yet, retrieval uses only
+   source-derived task features and an explicit `bottleneck="unknown"`; it is
+   never represented as a profiled parent. The context is passed through both
+   the direct KernelAgent route and the Fuser subgraph-dispatch route.
+2. **Iterative optimization** (as before), after the diagnosis.
+
+This decouples the memory factor `M` from `optimize`, so the `O-` row of the
+2x2 ablation (`optimize` off; memory on/off) is runnable without NCU. It does
+**not** remove the NCU requirement for the `O+` row.
+
+Limitations when NCU is unavailable: the source store can still contain
+project-evaluator `task_result` records and internal-test-only generation
+traces, but no parent-relative performance or NCU profile. Generation-arm
+summaries therefore carry little measured performance signal until the
+optimization path (and NCU) is available; retrieval ranking gracefully falls
+back to compatibility and task similarity with a no-profile caveat.
 
 ## Memory write
 

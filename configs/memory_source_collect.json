@@ -6,7 +6,9 @@
   "api_base_url": null,
   "api_key_env": "OPENAI_API_KEY",
   "gpu_id": 0,
-  "gpu_arch": ["Ampere"],
+  "gpu_arch": [
+    "Ampere"
+  ],
   "cpu_worker_limit": 4,
   "candidate_count": 4,
   "search_budget": 5,
@@ -26,7 +28,13 @@
   "optimization_bottlenecks": 2,
   "optimization_max_no_improvement": 3,
   "optimization_timeout_s": 3600,
-  "task_ids": [19, 23, 40, 47],
+  "task_ids": [
+    19,
+    23,
+    35,
+    47,
+    63
+  ],
   "task_range": null,
   "memory_mode": "collect",
   "memory_dir": "memory",
@@ -36,5 +44,5 @@
   "memory_prompt_budget_chars": 4000,
   "memory_include_failures": true,
   "memory_allow_foreign_compat": false,
-  "memory_record_generation_traces": false
+  "memory_record_generation_traces": true
 }

@@ -44,6 +44,7 @@ class TritonKernelAgent:
         target_platform: PlatformConfig | None = None,
         no_cusolver: bool = False,
         test_timeout_s: int = 30,
+        retrieval_context: str | None = None,
     ):
         """
         Initialize the Triton Kernel Agent.
@@ -93,6 +94,10 @@ class TritonKernelAgent:
         )
         self.no_cusolver = no_cusolver
         self.test_timeout_s = test_timeout_s
+
+        # Optional, separately-labeled measured cross-task experience injected
+        # into the seed-generation prompt.  ``None`` preserves original output.
+        self.retrieval_context = retrieval_context
 
         # Setup main logger
         self._setup_logging()
@@ -363,6 +368,7 @@ if __name__ == "__main__":
                     problem_description=problem_description,
                     test_code=test_code,
                     no_cusolver=self.no_cusolver,
+                    retrieval_context=self.retrieval_context,
                 )
 
                 kernels = []

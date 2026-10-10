@@ -27,6 +27,13 @@ def test_memory_configs_parse_and_validate(path: Path):
         assert not set(config.task_ids or []) & {1, 40, 50, 88, 95}
     if "control_off" in path.name:
         assert config.memory_config() is None
+    if "gen_frozen" in path.name:
+        assert config.optimize is False
+        assert config.memory_mode == "frozen"
+        assert config.memory_snapshot_dir
+    if "gen_off" in path.name:
+        assert config.optimize is False
+        assert config.memory_config() is None
 
 
 def test_control_and_frozen_share_eval_tasks():

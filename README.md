@@ -225,8 +225,9 @@ KernelAgent can persist and reuse measured experience across tasks through the
 `kernel_memory/` sidecar. It is **off by default**; when disabled the generation
 and optimization paths are unchanged. Enable it through
 `kernelbench_runner` (`--memory-mode off|collect|frozen|continual`). Retrieval is
-wired into the iterative optimization stage, and static RAG examples and measured
-memory are shown as separate prompt blocks. See
+wired into both seed generation (source-derived features only, no profiled
+parent) and the iterative optimization stage, and static RAG examples and
+measured memory are shown as separate prompt blocks. See
 [docs/MEMORY_INTEGRATION_NOTES.md](docs/MEMORY_INTEGRATION_NOTES.md) for the
 record schema, anti-leakage rules, and the list of implemented versus planned
 pieces; see [docs/README.md](docs/README.md) for the runbook and CLI.
