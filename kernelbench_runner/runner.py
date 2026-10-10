@@ -104,6 +104,12 @@ def _prepare_environment(config: RunnerConfig) -> dict[str, str]:
         env["OPENAI_BASE_URL"] = config.api_base_url
     env["OPENAI_MODEL"] = config.model
     env["CUDA_VISIBLE_DEVICES"] = str(config.gpu_id)
+    # Reduce allocator fragmentation on memory-heavy L1 tasks (e.g. the
+    # 4096x393216 elementwise problems).  Applied to generation, optimization
+    # and evaluation children uniformly so both A/B arms see the same setting.
+    env.setdefault(
+        "PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True"
+    )
     python_path = [str(REPO_ROOT)]
     if env.get("PYTHONPATH"):
         python_path.append(env["PYTHONPATH"])
@@ -258,6 +264,8 @@ def _result_status(
         return "compile_failed"
     if not evaluation.get("runtime_success"):
         return "runtime_failed"
+    if evaluation.get("oom"):
+        return "oom"
     if not evaluation.get("correct"):
         return "incorrect"
     if _positive_float(evaluation.get("candidate_latency_ms")) is None:

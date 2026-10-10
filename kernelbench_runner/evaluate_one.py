@@ -213,6 +213,7 @@ def main() -> int:
         "compiled": False,
         "runtime_success": False,
         "correct": False,
+        "oom": False,
         "baseline_latency_ms": None,
         "candidate_latency_ms": None,
         "speedup": None,
@@ -356,6 +357,14 @@ def main() -> int:
             "total": args.num_correct_trials,
             "results": trial_results,
         }
+        if any(
+            "out of memory" in str(trial.get("error", "")).lower()
+            for trial in trial_results
+        ):
+            payload["oom"] = True
+            payload["error"] = payload.get("error") or (
+                "CUDA out of memory during correctness trials"
+            )
 
         if payload["correct"]:
             phase = "benchmark"
@@ -406,6 +415,8 @@ def main() -> int:
     except Exception as exc:
         payload["error"] = str(exc)
         payload["exception"] = exc.__class__.__name__
+        if "out of memory" in str(exc).lower():
+            payload["oom"] = True
         if phase == "benchmark":
             payload["metadata"]["performance_error"] = str(exc)
         else:

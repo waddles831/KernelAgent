@@ -168,8 +168,11 @@ Everything lands under `runs/<experiment_name>/`:
 
 Per-task `evaluation_status` is one of `passed`, `generation_failed`,
 `generation_timeout`, `adapter_failed`, `compile_failed`, `runtime_failed`,
-`incorrect`, `timing_failed`, `evaluation_failed`, `evaluation_timeout`.
-`speedup = torch.compile(reference) / candidate`.
+`oom`, `incorrect`, `timing_failed`, `evaluation_failed`, `evaluation_timeout`.
+`speedup = torch.compile(reference) / candidate`. `oom` is a non-evaluable
+status (correctness/benchmark ran out of GPU memory); exclude it from speedup
+aggregates instead of counting it as incorrect. Memory-heavy L1 tasks
+(e.g. 19–32, 38–39 with ~6–8 GiB input tensors) may OOM on a 24 GiB A30.
 
 For the smoke set the expected shape is: simple elementwise/reduction tasks pass
 (e.g. tasks 1, 88, 95); harder tasks (40 LayerNorm, 50 Conv2d 11×11 s4 p2) only

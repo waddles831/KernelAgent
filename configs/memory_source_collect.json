@@ -29,11 +29,11 @@
   "optimization_max_no_improvement": 3,
   "optimization_timeout_s": 3600,
   "task_ids": [
-    19,
-    23,
-    35,
-    47,
-    63
+    2,
+    36,
+    63,
+    94,
+    98
   ],
   "task_range": null,
   "memory_mode": "collect",

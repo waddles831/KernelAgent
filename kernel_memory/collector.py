@@ -68,6 +68,7 @@ def classify_task_status(evaluation_status: str) -> str:
         "compile_failed": "compile_error",
         "runtime_failed": "runtime_error",
         "incorrect": "correctness_failed",
+        "oom": "oom",
         "timing_failed": "timing_failed",
         "evaluation_failed": "runtime_error",
         "evaluation_timeout": "timeout",
