@@ -78,6 +78,24 @@ def _to_device(value: Any, *, device: Any, torch: Any) -> Any:
     return value
 
 
+def _to_cpu(value: Any, *, torch: Any) -> Any:
+    """Copy a (possibly nested) output structure to host memory.
+
+    Used so correctness comparison never needs the reference output and the
+    candidate input/output resident on GPU at once - the 3x residency is what
+    OOMs on multi-GiB L1 tasks.
+    """
+    if isinstance(value, torch.Tensor):
+        return value.detach().to("cpu")
+    if isinstance(value, tuple):
+        return tuple(_to_cpu(item, torch=torch) for item in value)
+    if isinstance(value, list):
+        return [_to_cpu(item, torch=torch) for item in value]
+    if isinstance(value, dict):
+        return {key: _to_cpu(item, torch=torch) for key, item in value.items()}
+    return value
+
+
 def _compare_outputs(
     reference: Any,
     candidate: Any,
@@ -306,7 +324,13 @@ def main() -> int:
                 with torch.inference_mode():
                     expected = reference_model(*ref_inputs)
                     torch.cuda.synchronize(device)
-                    del ref_inputs
+                    # Move the reference output to host memory and free the GPU
+                    # copy before allocating the candidate input/output.  This
+                    # keeps at most one multi-GiB output resident on the GPU.
+                    expected_cpu = _to_cpu(expected, torch=torch)
+                    del expected, ref_inputs
+                    if hasattr(torch.cuda, "empty_cache"):
+                        torch.cuda.empty_cache()
 
                     # Recreate the same seeded input instead of keeping two
                     # large device copies alive for correctness comparison.
@@ -317,10 +341,14 @@ def main() -> int:
                     ]
                     actual = candidate_model(*candidate_inputs)
                     torch.cuda.synchronize(device)
+                    actual_cpu = _to_cpu(actual, torch=torch)
+                    del actual, candidate_inputs
+                    if hasattr(torch.cuda, "empty_cache"):
+                        torch.cuda.empty_cache()
                 payload["compiled"] = True
                 matched, error, max_diff = _compare_outputs(
-                    expected,
-                    actual,
+                    expected_cpu,
+                    actual_cpu,
                     torch=torch,
                     rtol=1e-3,
                     atol=1e-3,
@@ -335,7 +363,7 @@ def main() -> int:
                     }
                 )
                 pass_count += int(matched)
-                del expected, actual, candidate_inputs
+                del expected_cpu, actual_cpu
             except Exception as exc:
                 runtime_success = False
                 trial_results.append(
