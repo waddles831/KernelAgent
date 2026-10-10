@@ -23,6 +23,35 @@ from kernel_memory.schema import (
     task_result_record,
 )
 
+_PRECISION_MISMATCH_PATTERNS = (
+    "expected bf16",
+    "expected bfloat16",
+    "expected fp16",
+    "expected float16",
+    "expected half",
+    "expected float32",
+    "expected fp32",
+    "must be bf16",
+    "must be bfloat16",
+    "incompatible dtypes",
+    "dtype mismatch",
+    "promote_types",
+    "not implemented for 'bfloat16'",
+    "not implemented for 'half'",
+    "not implemented for 'float16'",
+)
+
+
+def _looks_like_precision_mismatch(text: str | None) -> bool:
+    """True when an error indicates a dtype/precision-contract violation.
+
+    Such failures are correctness failures: they silently change numerical
+    semantics versus the reference and must never earn performance credit.
+    """
+    lowered = (text or "").lower()
+    return any(pattern in lowered for pattern in _PRECISION_MISMATCH_PATTERNS)
+
+
 _ACTION_TAG_PROBES: tuple[tuple[str, str], ...] = (
     ("num_warps", r"\bnum_warps\b"),
     ("num_stages", r"\bnum_stages\b"),
@@ -42,6 +71,8 @@ def classify_error(error_text: str | None) -> str:
     if not error_text:
         return "unknown"
     text = error_text.lower()
+    if _looks_like_precision_mismatch(text):
+        return "correctness_failed"
     if "out of memory" in text or "cuda error: out of memory" in text or "oom" in text:
         return "oom"
     if "timed out" in text or "timeout" in text:
@@ -59,7 +90,9 @@ def classify_error(error_text: str | None) -> str:
     return "unknown"
 
 
-def classify_task_status(evaluation_status: str) -> str:
+def classify_task_status(evaluation_status: str, error_text: str | None = None) -> str:
+    if _looks_like_precision_mismatch(error_text):
+        return "correctness_failed"
     mapping = {
         "passed": "none",
         "generation_failed": "runtime_error",
@@ -353,7 +386,9 @@ def task_result_record_from_result(
         task_speedup=result.get("speedup"),
         timing_methodology=timing,
         route=result.get("route"),
-        failure_category=classify_task_status(result.get("evaluation_status", "unknown")),
+        failure_category=classify_task_status(
+            result.get("evaluation_status", "unknown"), result.get("error")
+        ),
         memory_version_used=memory_version_used,
         memory_mode_used=memory_mode_used,
         artifacts=result.get("artifacts") or {},

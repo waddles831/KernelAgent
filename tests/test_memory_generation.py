@@ -38,6 +38,7 @@ def test_generation_prompt_omits_context_when_absent():
         problem_description="desc", test_code="test", no_cusolver=False
     )
     assert "MEASURED CROSS-TASK EXPERIENCE" not in baseline
+    assert "NUMERICAL PRECISION CONTRACT" in baseline
     with_context = pm.render_kernel_generation_prompt(
         problem_description="desc",
         test_code="test",

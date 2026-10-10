@@ -82,6 +82,12 @@ the exact file/CLI surface.
 - NCU-derived SOL is stored with `scope="single_kernel_only"` and never labeled
   as end-to-end multi-kernel state. Missing profiling is `status="unavailable"`.
 - `was_diagnosis_correct` is persisted as an LLM judgement, not a measured fact.
+- A dtype/precision-contract violation (e.g. a kernel that only accepts/produces
+  bfloat16 for a float32 task) is classified as `correctness_failed`, even when
+  the project evaluator reports it as a compile failure. It never carries a
+  valid `task_speedup` or parent-relative `local_speedup`, and task-result
+  retrieval marks it `measurement_available=false` so it cannot contribute to
+  performance-strategy scoring.
 
 ### Not yet implemented (Planned)
 

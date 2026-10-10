@@ -260,6 +260,16 @@ Frozen arms read `memory_snapshots/source_v1`, built from the source config via
 explicitly-started GPU experiment. See `docs/MEMORY_INTEGRATION_NOTES.md` for the
 schema, anti-leakage rules, and what is implemented versus planned.
 
+## Numerical precision contract
+
+Benchmarking only runs after all correctness trials pass. A
+dtype/precision-contract violation (e.g. a bfloat16-only kernel for a float32
+task) is recorded as a **correctness failure** and never earns performance
+credit (no `candidate_latency_ms`, no `speedup`). The seed-generation prompt
+carries an explicit numerical-precision contract (float32 in/out, no silent
+reduced-precision casts) so the model is told the evaluator's dtype convention
+instead of inferring it from `torch.rand`.
+
 ## Hard rules
 
 - Do **not** use Docker here, and do not run `scripts/build_a30_image.sh` or

@@ -36,6 +36,12 @@ RUNTIME RESTRICTIONS:
 - Never import or instantiate `torch.nn` modules, call `torch.nn.functional` (or aliases such as `F.*`), or rely on PyTorch helpers like `torch.conv*`, `torch.tanh`, `torch.sigmoid`, `torch.max_pool*`, etc.
 - Allowed PyTorch usage is limited to allocation helpers (`torch.empty_like`, `torch.zeros`, etc.), dtype/device checks, and assertions needed to launch the Triton kernel.
 
+NUMERICAL PRECISION CONTRACT (MANDATORY):
+- The evaluation harness feeds floating-point inputs as float32 and compares the wrapper output against the reference `Model` output with `torch.allclose(rtol=1e-3, atol=1e-3)`.
+- The wrapper MUST accept the input dtypes exactly as provided (float32 here) and return an output whose dtype matches the reference implementation (float32 here).
+- DO NOT silently cast inputs or outputs to a reduced precision (bfloat16/float16) or otherwise change numerical semantics. A kernel that only works with bfloat16/float16 inputs, or that emits a non-float32 output for a float32 task, is INCORRECT and will fail evaluation, even if it passes a self-generated test.
+- Reduced precision may be used only internally, and only if the reference computation does too; the externally visible input/output dtypes must match the reference.
+
 CRITICAL REQUIREMENTS - NO CHEATING ALLOWED:
 1. The implementation must be a complete, valid Python file
 2. Import necessary modules (triton, triton.language as tl, torch)
