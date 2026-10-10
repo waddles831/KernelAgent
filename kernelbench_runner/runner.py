@@ -107,14 +107,32 @@ def _prepare_environment(config: RunnerConfig) -> dict[str, str]:
     # Reduce allocator fragmentation on memory-heavy L1 tasks (e.g. the
     # 4096x393216 elementwise problems).  Applied to generation, optimization
     # and evaluation children uniformly so both A/B arms see the same setting.
-    env.setdefault(
-        "PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True"
-    )
+    # PyTorch >= 2.9 renamed the variable; set the new name to avoid the
+    # deprecation warning and fall back for older Torch only if unset.
+    env.setdefault("PYTORCH_ALLOC_CONF", "expandable_segments:True")
     python_path = [str(REPO_ROOT)]
     if env.get("PYTHONPATH"):
         python_path.append(env["PYTHONPATH"])
     env["PYTHONPATH"] = os.pathsep.join(python_path)
     return env
+
+
+def _cleanup_process_group(pid: int) -> None:
+    """Terminate any grandchildren left in a finished child's process group.
+
+    Generation and optimization children spawn worker subprocesses that touch
+    the GPU.  Letting those linger into the next pipeline stage causes CUDA OOM
+    in evaluation, so once the direct child exits we reap its whole group.
+    """
+    try:
+        os.killpg(pid, signal.SIGTERM)
+    except ProcessLookupError:
+        return
+    time.sleep(0.5)
+    try:
+        os.killpg(pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
 
 
 def _run_child(
@@ -137,7 +155,7 @@ def _run_child(
             start_new_session=True,
         )
         try:
-            return process.wait(timeout=timeout_s), False
+            code = process.wait(timeout=timeout_s)
         except subprocess.TimeoutExpired:
             try:
                 os.killpg(process.pid, signal.SIGTERM)
@@ -152,6 +170,9 @@ def _run_child(
                     pass
                 process.wait()
             return None, True
+        # Reap orphaned workers before returning to the caller.
+        _cleanup_process_group(process.pid)
+        return code, False
 
 
 def _read_json(path: Path) -> dict[str, Any]:
