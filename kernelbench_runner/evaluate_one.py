@@ -223,6 +223,13 @@ def main() -> int:
     parser.add_argument("--rep-ms", required=True, type=float)
     parser.add_argument("--gpu-lock-id", required=True)
     parser.add_argument("--gpu-arch", action="append", required=True)
+    parser.add_argument(
+        "--allow-tf32",
+        type=int,
+        choices=[0, 1],
+        default=0,
+        help="Allow TF32 for the reference/benchmark (0 pins deterministic FP32)",
+    )
     args = parser.parse_args()
 
     started = time.perf_counter()
@@ -261,6 +268,12 @@ def main() -> int:
         import triton
         import triton.testing
 
+        # Pin the reference/benchmark precision policy so correctness is
+        # deterministic and the float32 contract is not confused with a
+        # hardware TF32 path.
+        torch.backends.cudnn.allow_tf32 = bool(args.allow_tf32)
+        torch.backends.cuda.matmul.allow_tf32 = bool(args.allow_tf32)
+
         if not torch.cuda.is_available():
             raise RuntimeError("CUDA is unavailable")
         device = torch.device("cuda:0")
@@ -271,6 +284,12 @@ def main() -> int:
                 "torch_version": torch.__version__,
                 "triton_version": triton.__version__,
                 "device": str(device),
+                "precision_policy": {
+                    "cudnn_allow_tf32": bool(torch.backends.cudnn.allow_tf32),
+                    "matmul_allow_tf32": bool(
+                        torch.backends.cuda.matmul.allow_tf32
+                    ),
+                },
             }
         )
 

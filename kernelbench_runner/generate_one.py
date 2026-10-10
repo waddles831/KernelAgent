@@ -89,6 +89,12 @@ def main() -> int:
     parser.add_argument("--run-id", default="unknown")
     parser.add_argument("--task-id", type=int, default=-1)
     parser.add_argument("--task-name", default="task")
+    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument(
+        "--no-project-contract",
+        action="store_true",
+        help="Disable the project-evaluator correctness contract test",
+    )
     args = parser.parse_args()
 
     metadata: dict[str, Any] = {"success": False, "route": None, "details": {}}
@@ -97,6 +103,18 @@ def main() -> int:
         # Retrieve before constructing the router so the context reaches both
         # the direct KernelAgent and Fuser routes.
         bridge, retrieval_context = _build_generation_memory(args)
+
+        # Verify candidates against the project evaluator's contract instead of
+        # a self-generated test (float32, allclose 1e-3, output dtype match).
+        contract_test = None
+        if not args.no_project_contract:
+            from kernelbench_runner.project_test import (
+                build_kernelagent_test_from_path,
+            )
+
+            contract_test = build_kernelagent_test_from_path(
+                args.problem.resolve(), seed=args.seed
+            )
 
         # Import after the parent process has selected CUDA_VISIBLE_DEVICES.
         from Fuser.auto_agent import AutoKernelRouter
@@ -123,12 +141,16 @@ def main() -> int:
             use_router_cache=False,
             retrieval_context=retrieval_context,
         )
-        result = router.solve(args.problem.resolve())
+        result = router.solve(args.problem.resolve(), test_code=contract_test)
         metadata = {
             "success": bool(result.success),
             "route": result.route,
             "details": _json_safe(result.details),
             "worker_id": getattr(result, "worker_id", None),
+            "project_contract_test_provided": contract_test is not None,
+            "project_contract_test_used": (
+                contract_test is not None and result.route == "kernelagent"
+            ),
         }
         details = result.details if isinstance(result.details, dict) else {}
         session_dir = details.get("session_dir")

@@ -571,7 +571,11 @@ def run_experiment(
             str(kernel_path),
             "--metadata-output",
             str(agent_metadata_path),
+            "--seed",
+            str(config.random_seed),
         ]
+        if not config.generation_project_contract:
+            generation_command.append("--no-project-contract")
         if (
             memory_config is not None
             and memory_config.retrieval_enabled()
@@ -698,6 +702,8 @@ def run_experiment(
                 str(config.benchmark_rep_ms),
                 "--gpu-lock-id",
                 str(config.gpu_id),
+                "--allow-tf32",
+                str(int(config.correctness_allow_tf32)),
             ]
             for architecture in config.gpu_arch:
                 evaluation_command.extend(["--gpu-arch", architecture])

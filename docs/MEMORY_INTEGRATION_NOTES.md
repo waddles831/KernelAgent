@@ -88,6 +88,13 @@ the exact file/CLI surface.
   valid `task_speedup` or parent-relative `local_speedup`, and task-result
   retrieval marks it `measurement_available=false` so it cannot contribute to
   performance-strategy scoring.
+- Generation now verifies candidates against the project evaluator's contract
+  (`kernelbench_runner.project_test`: seeded float32, `allclose(rtol=atol=1e-3)`,
+  output-dtype match) rather than an LLM-generated test, and `evaluate_one` pins
+  `allow_tf32=False` and records the precision policy. This closes the
+  "internal pass does not imply project pass" gap for the direct KernelAgent
+  route; the Fuser subgraph route still uses its own verification and is a
+  marked follow-up.
 
 ### Not yet implemented (Planned)
 

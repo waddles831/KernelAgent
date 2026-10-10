@@ -37,6 +37,14 @@ class RunnerConfig:
 
     random_seed: int = 42
     num_correct_trials: int = 5
+    # Pin the evaluator's precision policy: False -> deterministic FP32
+    # (torch.backends.*.allow_tf32 = False) so correctness is not confounded by
+    # a hardware TF32 path.
+    correctness_allow_tf32: bool = False
+    # Verify generated kernels against the project evaluator's contract test
+    # (seeded float32, allclose 1e-3, output dtype match) instead of an
+    # LLM-generated test.
+    generation_project_contract: bool = True
     benchmark_warmup_ms: float = 1000.0
     benchmark_rep_ms: float = 100.0
     generation_timeout_s: int = 1800

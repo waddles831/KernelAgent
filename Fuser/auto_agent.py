@@ -400,7 +400,12 @@ class AutoKernelRouter:
             # Ensure exceptions in KernelAgent do not abort routing; return a structured failure
             try:
                 res = agent.generate_kernel(
-                    problem_description=problem_code, test_code=test_code
+                    problem_description=problem_code,
+                    test_code=test_code,
+                    # When the caller supplies a project-contract test, do not
+                    # also generate an LLM test; the contract test is the
+                    # acceptance criterion.
+                    generate_default_test=test_code is None,
                 )
             except BaseException as exc:
                 return RouteResult(

@@ -103,6 +103,20 @@ def _parser() -> argparse.ArgumentParser:
         help="Also store generation worker traces as internal-test evidence",
     )
     parser.add_argument(
+        "--correctness-allow-tf32",
+        action=argparse.BooleanOptionalAction,
+        dest="correctness_allow_tf32",
+        default=None,
+        help="Allow TF32 in the reference evaluator (default: pinned FP32)",
+    )
+    parser.add_argument(
+        "--generation-project-contract",
+        action=argparse.BooleanOptionalAction,
+        dest="generation_project_contract",
+        default=None,
+        help="Verify generated kernels against the project contract test",
+    )
+    parser.add_argument(
         "--optimize",
         action="store_true",
         dest="optimize",

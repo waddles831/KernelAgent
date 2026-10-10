@@ -265,10 +265,21 @@ schema, anti-leakage rules, and what is implemented versus planned.
 Benchmarking only runs after all correctness trials pass. A
 dtype/precision-contract violation (e.g. a bfloat16-only kernel for a float32
 task) is recorded as a **correctness failure** and never earns performance
-credit (no `candidate_latency_ms`, no `speedup`). The seed-generation prompt
-carries an explicit numerical-precision contract (float32 in/out, no silent
-reduced-precision casts) so the model is told the evaluator's dtype convention
-instead of inferring it from `torch.rand`.
+credit (no `candidate_latency_ms`, no `speedup`).
+
+Two mechanisms enforce the contract:
+
+- **Generation** verifies candidates against a self-contained project-contract
+  test (`kernelbench_runner.project_test`) instead of an LLM-generated test:
+  seeded float32 inputs, structural comparison, `torch.allclose(rtol=atol=1e-3)`
+  and an explicit output-dtype match. Disable with
+  `--no-generation-project-contract`.
+- **Evaluation** pins the reference/benchmark precision policy; by default
+  `torch.backends.cudnn.allow_tf32 = False` and
+  `torch.backends.cuda.matmul.allow_tf32 = False` so correctness is not
+  confounded by a hardware TF32 path. The policy is recorded in
+  `kernelagent_benchmark_result.json` (`metadata.precision_policy`). Override
+  with `--correctness-allow-tf32`.
 
 ## Hard rules
 
