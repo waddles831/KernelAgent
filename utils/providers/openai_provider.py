@@ -33,5 +33,11 @@ class OpenAIProvider(OpenAICompatibleProvider):
             return 32000
         elif model_name.startswith("gpt-3.5"):
             return 16000
+        elif model_name.startswith("deepseek-flash"):
+            # deepseek-flash is a reasoning model: its chain-of-thought tokens
+            # count against the completion budget, so the OpenAI-compatible
+            # 8192 default truncates the response before any answer `content`
+            # is emitted. Allow the larger budgets the generator requests.
+            return 32768
         else:
             return 8192
