@@ -352,6 +352,7 @@ class AutoKernelRouter:
         test_timeout_s: int = 30,
         test_code: str | None = None,
         retrieval_context: str | None = None,
+        contract_verifier: Any | None = None,
     ) -> None:
         self.ka_model = ka_model
         self.ka_num_workers = ka_num_workers
@@ -382,6 +383,10 @@ class AutoKernelRouter:
         # Optional measured cross-task experience injected into generation
         # prompts (both direct KernelAgent and Fuser subgraph dispatch).
         self.retrieval_context = retrieval_context
+        # Optional callable that verifies a candidate kernel against the
+        # project contract, used to gate Fuser results (which are otherwise
+        # verified by Fuser's own tests). Signature: kernel_code -> (ok, output).
+        self.contract_verifier = contract_verifier
 
     def _solve_with_kernelagent(
         self, problem_code: str, test_code: str | None = None
@@ -495,6 +500,43 @@ class AutoKernelRouter:
             details=res,
         )
 
+    def _gate_fuser_with_contract(
+        self, res: RouteResult, test_code: str | None
+    ) -> RouteResult:
+        """Reject a Fuser result that fails the project-contract test.
+
+        Fuser verifies with its own tests; when a caller supplies the project
+        contract test and a verifier, the composed kernel must also pass it
+        before being accepted.  Rejected results become failures so the caller
+        can fall back to the direct KernelAgent route (which is verified against
+        the contract during generation).
+        """
+        if not (
+            test_code
+            and res.success
+            and getattr(res, "kernel_code", None)
+            and self.contract_verifier is not None
+        ):
+            return res
+        try:
+            ok, output = self.contract_verifier(res.kernel_code)
+        except Exception as exc:  # noqa: BLE001 - never let the gate crash routing
+            details = dict(res.details or {})
+            details["contract_test_error"] = f"{exc.__class__.__name__}: {exc}"
+            return RouteResult(route="fuser", success=False, kernel_code=None, details=details)
+        if not ok:
+            details = dict(res.details or {})
+            details["contract_test_failed"] = str(output)[-500:]
+            return RouteResult(route="fuser", success=False, kernel_code=None, details=details)
+        details = dict(res.details or {})
+        details["contract_test_passed"] = True
+        return RouteResult(
+            route=res.route,
+            success=True,
+            kernel_code=res.kernel_code,
+            details=details,
+        )
+
     def solve(self, problem_path: Path, test_code: str | None = None) -> RouteResult:
         code = problem_path.read_text(encoding="utf-8")
         # Use explicitly-passed test_code, falling back to the instance default
@@ -585,7 +627,9 @@ class AutoKernelRouter:
                 return ka_res
             return self._solve_with_fuser(problem_path)
         elif strategy == "fuser":
-            fuser_res = self._solve_with_fuser(problem_path)
+            fuser_res = self._gate_fuser_with_contract(
+                self._solve_with_fuser(problem_path), test_code
+            )
             if fuser_res.success or not self.allow_fallback:
                 return fuser_res
             return self._solve_with_kernelagent(code, test_code=test_code)
@@ -595,7 +639,9 @@ class AutoKernelRouter:
                 return ka_res
             return self._solve_with_fuser(problem_path)
         else:  # fuser_then_kernel
-            fuser_res = self._solve_with_fuser(problem_path)
+            fuser_res = self._gate_fuser_with_contract(
+                self._solve_with_fuser(problem_path), test_code
+            )
             if fuser_res.success or not self.allow_fallback:
                 return fuser_res
             return self._solve_with_kernelagent(code, test_code=test_code)

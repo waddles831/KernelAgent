@@ -92,9 +92,10 @@ the exact file/CLI surface.
   (`kernelbench_runner.project_test`: seeded float32, `allclose(rtol=atol=1e-3)`,
   output-dtype match) rather than an LLM-generated test, and `evaluate_one` pins
   `allow_tf32=False` and records the precision policy. This closes the
-  "internal pass does not imply project pass" gap for the direct KernelAgent
-  route; the Fuser subgraph route still uses its own verification and is a
-  marked follow-up.
+  "internal pass does not imply project pass" gap. For Fuser, the composed
+  kernel is gated on the same contract via an injected verifier and falls back
+  to the direct KernelAgent route on failure (per-subgraph contracting is not
+  used because Fuser's own `_build_reference_code` does not cover every op).
 
 ### Not yet implemented (Planned)
 

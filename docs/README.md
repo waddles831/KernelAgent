@@ -272,8 +272,9 @@ Two mechanisms enforce the contract:
 - **Generation** verifies candidates against a self-contained project-contract
   test (`kernelbench_runner.project_test`) instead of an LLM-generated test:
   seeded float32 inputs, structural comparison, `torch.allclose(rtol=atol=1e-3)`
-  and an explicit output-dtype match. Disable with
-  `--no-generation-project-contract`.
+  and an explicit output-dtype match. The direct route uses it as its test; a
+  Fuser-composed kernel is gated on the same test and falls back to the direct
+  route if it fails. Disable with `--no-generation-project-contract`.
 - **Evaluation** pins the reference/benchmark precision policy; by default
   `torch.backends.cudnn.allow_tf32 = False` and
   `torch.backends.cuda.matmul.allow_tf32 = False` so correctness is not

@@ -23,6 +23,10 @@ generation worker's test harness (``from kernel import kernel_function``).
 from __future__ import annotations
 
 from pathlib import Path
+import os
+import subprocess
+import sys
+import tempfile
 
 _DEFAULT_RTOL = 1e-3
 _DEFAULT_ATOL = 1e-3
@@ -207,3 +211,38 @@ def build_kernelagent_test_from_path(
 ) -> str:
     source = Path(problem_path).read_text(encoding="utf-8")
     return build_kernelagent_test_source(source, seed=seed, rtol=rtol, atol=atol)
+
+
+def run_contract_test(
+    kernel_source: str,
+    test_source: str,
+    *,
+    timeout_s: int = 300,
+    workdir: Path | str | None = None,
+) -> tuple[bool, str]:
+    """Run an already-built contract test against a kernel source.
+
+    Writes ``kernel.py`` and ``contract_test.py`` into a temporary directory and
+    executes the test (which imports ``from kernel import kernel_function``).
+    Returns ``(passed, output)``.
+    """
+    directory = Path(workdir) if workdir is not None else Path(
+        tempfile.mkdtemp(prefix="kb_contract_")
+    )
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / "kernel.py").write_text(kernel_source, encoding="utf-8")
+    test_path = directory / "contract_test.py"
+    test_path.write_text(test_source, encoding="utf-8")
+    try:
+        result = subprocess.run(
+            [sys.executable, str(test_path)],
+            cwd=str(directory),
+            capture_output=True,
+            text=True,
+            timeout=timeout_s,
+            env=os.environ.copy(),
+        )
+    except subprocess.TimeoutExpired:
+        return False, f"contract test timed out after {timeout_s}s"
+    output = (result.stdout or "") + (result.stderr or "")
+    return result.returncode == 0, output.strip()

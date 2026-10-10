@@ -93,3 +93,47 @@ def test_cli_parses_contract_and_precision_flags():
     )
     assert args.generation_project_contract is False
     assert args.correctness_allow_tf32 is True
+
+
+def test_run_contract_test_plumbing(tmp_path):
+    from kernelbench_runner.project_test import run_contract_test
+
+    ok, output = run_contract_test(
+        "def kernel_function(x): return x", "print('PASS')", workdir=tmp_path / "a"
+    )
+    assert ok and "PASS" in output
+
+    ok, output = run_contract_test(
+        "def kernel_function(x): return x",
+        "import sys\nprint('FAIL: bad')\nsys.exit(1)\n",
+        workdir=tmp_path / "b",
+    )
+    assert not ok and "FAIL" in output
+
+
+def test_router_gate_rejects_failing_fuser_result():
+    from Fuser.auto_agent import AutoKernelRouter, RouteResult
+
+    failing = AutoKernelRouter(contract_verifier=lambda code: (False, "diff too big"))
+    result = failing._gate_fuser_with_contract(
+        RouteResult(route="fuser", success=True, details={}, kernel_code="K"), "TEST"
+    )
+    assert result.success is False
+    assert "contract_test_failed" in result.details
+
+    passing = AutoKernelRouter(contract_verifier=lambda code: (True, "PASS"))
+    result = passing._gate_fuser_with_contract(
+        RouteResult(route="fuser", success=True, details={}, kernel_code="K"), "TEST"
+    )
+    assert result.success is True
+    assert result.details["contract_test_passed"] is True
+
+
+def test_router_gate_is_noop_without_verifier_or_test():
+    from Fuser.auto_agent import AutoKernelRouter, RouteResult
+
+    router = AutoKernelRouter()
+    res = RouteResult(route="fuser", success=True, details={}, kernel_code="K")
+    assert router._gate_fuser_with_contract(res, "TEST").success is True
+    assert router._gate_fuser_with_contract(res, None).success is True
+

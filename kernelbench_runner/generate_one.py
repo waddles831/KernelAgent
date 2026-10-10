@@ -107,14 +107,21 @@ def main() -> int:
         # Verify candidates against the project evaluator's contract instead of
         # a self-generated test (float32, allclose 1e-3, output dtype match).
         contract_test = None
+        contract_verifier = None
         if not args.no_project_contract:
             from kernelbench_runner.project_test import (
                 build_kernelagent_test_from_path,
+                run_contract_test,
             )
 
             contract_test = build_kernelagent_test_from_path(
                 args.problem.resolve(), seed=args.seed
             )
+
+            def contract_verifier(kernel_code: str):
+                return run_contract_test(
+                    kernel_code, contract_test, timeout_s=args.test_timeout_s
+                )
 
         # Import after the parent process has selected CUDA_VISIBLE_DEVICES.
         from Fuser.auto_agent import AutoKernelRouter
@@ -140,6 +147,7 @@ def main() -> int:
             ignore_router_config=True,
             use_router_cache=False,
             retrieval_context=retrieval_context,
+            contract_verifier=contract_verifier,
         )
         result = router.solve(args.problem.resolve(), test_code=contract_test)
         metadata = {
@@ -149,7 +157,8 @@ def main() -> int:
             "worker_id": getattr(result, "worker_id", None),
             "project_contract_test_provided": contract_test is not None,
             "project_contract_test_used": (
-                contract_test is not None and result.route == "kernelagent"
+                contract_test is not None
+                and result.route in ("kernelagent", "fuser")
             ),
         }
         details = result.details if isinstance(result.details, dict) else {}
