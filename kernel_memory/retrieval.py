@@ -19,10 +19,21 @@ from __future__ import annotations
 
 from typing import Any
 
-from kernel_memory.features import task_similarity
+from kernel_memory.features import compatibility_key, task_similarity
 from kernel_memory.store import MemoryStore
 
 _CLAIM_LABEL = "MEASURED CROSS-TASK EXPERIENCE"
+
+
+def _record_compat_key(compat: dict[str, Any] | None) -> str | None:
+    """Derive the compatibility key from stored fields.
+
+    Deriving rather than trusting a stored ``compatibility_key`` keeps old
+    records matchable when the key definition changes.
+    """
+    if not compat:
+        return None
+    return compatibility_key(compat)
 
 
 def _item_from_summary(
@@ -50,12 +61,13 @@ def _item_from_summary(
         "model_class": predicate.get("model_class"),
     })
     source_task_ids = effect.get("source_task_ids") or []
+    record_key = _record_compat_key(summary.get("compatibility"))
     return {
         "kind": "summary",
         "source_id": summary.get("summary_id"),
         "version": summary.get("version"),
-        "compatibility_match": summary.get("compatibility_key") == compat_key,
-        "compatibility_key": summary.get("compatibility_key"),
+        "compatibility_match": record_key == compat_key,
+        "compatibility_key": record_key,
         "bottleneck_match": (summary.get("bottleneck_category") or "").lower()
         == (bottleneck or "").lower(),
         "bottleneck_category": summary.get("bottleneck_category"),
@@ -100,15 +112,13 @@ def _item_from_attempt(
         observed_bits.append(f"failure={failure}")
     action = attempt.get("action") or {}
     action_text = action.get("summary") or action.get("recommended_fix") or action.get("config_change")
+    record_key = _record_compat_key(attempt.get("compatibility"))
     return {
         "kind": "attempt",
         "source_id": attempt.get("record_id"),
         "version": None,
-        "compatibility_match": (attempt.get("compatibility") or {}).get(
-            "compatibility_key"
-        )
-        == compat_key,
-        "compatibility_key": (attempt.get("compatibility") or {}).get("compatibility_key"),
+        "compatibility_match": record_key == compat_key,
+        "compatibility_key": record_key,
         "bottleneck_match": (attempt.get("bottleneck_category") or "").lower()
         == (bottleneck or "").lower(),
         "bottleneck_category": attempt.get("bottleneck_category"),
@@ -150,15 +160,13 @@ def _item_from_task_result(
     if speedup is not None:
         observed_bits.append(f"task speedup vs torch.compile {float(speedup):.3f}x")
     ops = ", ".join(source_features.get("op_hints") or []) or "unknown ops"
+    record_key = _record_compat_key(record.get("compatibility"))
     return {
         "kind": "task_result",
         "source_id": record.get("record_id"),
         "version": None,
-        "compatibility_match": (record.get("compatibility") or {}).get(
-            "compatibility_key"
-        )
-        == compat_key,
-        "compatibility_key": (record.get("compatibility") or {}).get("compatibility_key"),
+        "compatibility_match": record_key == compat_key,
+        "compatibility_key": record_key,
         "bottleneck_match": False,
         "bottleneck_category": None,
         "task_similarity": task_similarity(task_features, source_features),

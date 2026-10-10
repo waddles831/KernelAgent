@@ -113,13 +113,16 @@ def compatibility_from_environment(
 def compatibility_key(compat: dict[str, Any]) -> str:
     """Stable key over the fields that constrain measured-memory reuse.
 
-    The model name is intentionally excluded because it does not change the
-    measured hardware behavior; it is recorded for provenance only.
+    Only fields that are reliably available on both the record-writing and
+    retrieval paths are used: GPU name, Torch version and Triton version.
+    ``gpu_arch`` and ``cuda_version`` are still stored for provenance but are
+    intentionally excluded here because they are not consistently populated
+    (e.g. the evaluation metadata has no CUDA version), which previously caused
+    same-environment records to fail to match.  The model name is excluded
+    because it does not change measured hardware behavior.
     """
     relevant = {
         "gpu_name": compat.get("gpu_name"),
-        "gpu_arch": compat.get("gpu_arch"),
-        "cuda_version": compat.get("cuda_version"),
         "torch_version": compat.get("torch_version"),
         "triton_version": compat.get("triton_version"),
     }

@@ -158,6 +158,25 @@ def test_empty_retrieval_returns_empty_context(tmp_path: Path):
     ) == ""
 
 
+def test_retrieval_derives_compatibility_key_from_stored_fields(tmp_path: Path):
+    # A stale/absent stored compatibility_key must not break matching; the key
+    # is derived from gpu/torch/triton fields on both sides.
+    record = make_attempt(task_id=7)
+    record["compatibility"]["compatibility_key"] = "stale-key"
+    store = MemoryStore(tmp_path / "mem")
+    store.append_attempts([record])
+    store.append_summaries(build_summaries([record]))
+    items, _ = retrieve_measured(
+        store,
+        compatibility=compat(),
+        task_features=task_features(),
+        bottleneck_category="memory",
+        current_task_id=99,
+    )
+    assert items
+    assert all(item["compatibility_match"] for item in items)
+
+
 def test_task_result_retrieval_includes_measured_speedup(tmp_path: Path):
     store = MemoryStore(tmp_path / "mem")
     store.append_task_results([_stored_task_result(7, speedup=5.4)])
