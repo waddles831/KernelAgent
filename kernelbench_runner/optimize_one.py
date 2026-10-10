@@ -145,6 +145,63 @@ def _detect_gpu_name() -> str | None:
     return None
 
 
+def _detect_environment(model: str, gpu_arch: list[str]) -> dict[str, Any]:
+    """Toolchain fingerprint for memory compatibility (unknown stays None)."""
+    gpu_name = torch_version = triton_version = cuda_version = None
+    torch_version = None
+    try:
+        import torch
+
+        torch_version = getattr(torch, "__version__", None)
+        cuda_version = getattr(getattr(torch, "version", None), "cuda", None)
+        if torch.cuda.is_available():
+            gpu_name = torch.cuda.get_device_name(0)
+    except Exception:
+        pass
+    try:
+        import triton
+
+        triton_version = getattr(triton, "__version__", None)
+    except Exception:
+        pass
+    from kernel_memory.integration import build_compatibility
+
+    return build_compatibility(
+        gpu_name=gpu_name,
+        torch_version=torch_version,
+        triton_version=triton_version,
+        cuda_version=cuda_version,
+        gpu_arch=gpu_arch,
+        model=model,
+    )
+
+
+def _build_memory_config(args: argparse.Namespace) -> dict[str, Any] | None:
+    """Load the user memory config and augment it with task/run context."""
+    if not args.memory_config:
+        return None
+    path = Path(args.memory_config)
+    if not path.exists():
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(payload, dict) or (payload.get("mode") or "off") == "off":
+        return None
+
+    from kernel_memory.features import extract_task_features
+
+    payload = dict(payload)
+    payload["run_id"] = args.run_id
+    payload["task_id"] = args.task_id
+    payload["task_name"] = args.task_name
+    payload["task_features"] = extract_task_features(args.problem.resolve())
+    payload["compatibility"] = _detect_environment(args.model, args.gpu_arch)
+    payload["evidence_dir"] = str(args.log_dir)
+    return payload
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--problem", required=True, type=Path)
@@ -162,6 +219,15 @@ def main() -> int:
     parser.add_argument("--max-no-improvement", required=True, type=int)
     parser.add_argument("--gpu-id", required=True, type=int)
     parser.add_argument("--gpu-arch", action="append", default=[])
+    parser.add_argument(
+        "--memory-config",
+        type=Path,
+        default=None,
+        help="Optional JSON memory configuration (mode/store_dir/limits)",
+    )
+    parser.add_argument("--run-id", default="unknown")
+    parser.add_argument("--task-id", type=int, default=-1)
+    parser.add_argument("--task-name", default="task")
     args = parser.parse_args()
 
     metadata: dict[str, Any] = {
@@ -192,6 +258,8 @@ def main() -> int:
             strategy_config = {"max_no_improvement": args.max_no_improvement}
             num_workers = 1
 
+        memory_config = _build_memory_config(args)
+
         manager = OptimizationManager(
             strategy=args.strategy,
             num_workers=num_workers,
@@ -204,6 +272,7 @@ def main() -> int:
             gpu_ids=[args.gpu_id],
             gpu_name=gpu_name,
             target_platform="cuda",
+            memory_config=memory_config,
         )
         result = manager.run_optimization(
             initial_kernel=initial_kernel,

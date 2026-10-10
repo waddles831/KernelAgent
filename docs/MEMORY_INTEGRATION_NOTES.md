@@ -1,10 +1,92 @@
 # Cross-Task Memory Integration Notes
 
-Cross-task memory is intentionally not implemented in this WSL2 phase. The
-following integration points are based on the current KernelAgent state and
-task flow. The KernelBlaster-informed proposal below adds a concrete design
-and experiment sequence; it does not mean that cross-task memory is already
-implemented or that its benefit on A30 has been established.
+Cross-task memory is now **implemented as an opt-in sidecar** (`kernel_memory/`)
+and is **off by default**. When `memory_mode` is `off`, the runner and optimizer
+behave exactly as before. The KernelBlaster-informed design below is the
+research motivation; the sections marked **Implemented** describe what exists
+in code and is covered by CPU tests, while sections marked **Planned** are not
+yet built. See [Implemented in this revision](#implemented-in-this-revision) for
+the exact file/CLI surface.
+
+## Implemented in this revision
+
+- **Package** `kernel_memory/`:
+  - `schema.py` — versioned records: `task_result`, `attempt`, `summary`,
+    `retrieval`; explicit failure/correctness/profile vocabularies.
+  - `features.py` — source-only task features; unknown runtime fields
+    (shapes/dtypes/layouts/scalars/tolerance) are `None` with a reason;
+    compatibility key over GPU/arch/CUDA/Torch/Triton (model excluded).
+  - `store.py` — `MemoryConfig` + `MemoryStore`: newline-delimited JSON under
+    one directory (`task_results.jsonl`, `attempts.jsonl`, `summaries.jsonl`,
+    `retrieval_log.jsonl`), advisory-locked appends, content-addressed
+    `memory_version`, and `freeze()` snapshots.
+  - `collector.py` — normalizes manager trajectory payloads and optional
+    generation traces into attempt records. A failed/unverified candidate is
+    recorded with `measurement.available=false` and `local_speedup=null`.
+  - `summary.py` — offline, **rule-based** consolidation of Reflexion/attempt
+    data into versioned summaries with support/counterexample IDs,
+    applicability, and `llm_judgment_used=false`.
+  - `retrieval.py` — bounded compatibility/bottleneck/task-feature retrieval
+    with regression evidence and a separately labeled experience block.
+  - `integration.py` — `MemoryBridge` (worker-side read-only retrieval) and
+    environment/task-context helpers.
+  - `inspection.py` — explicit artifact-coverage report; missing profiling,
+    attempt, or reflexion data is marked, never inferred.
+- **Optimizer**: `OptimizationOrchestrator` retrieves measured experience after
+  the diagnosis and before `render_kernel_optimization_prompt()`; a new
+  `experience_context` block is rendered separately from the static RAG
+  `rag_context`. The manager is the single writer of the raw trajectory
+  (`attempts` + `reflexions` for every worker, success/regression/failure),
+  stored to `optimization_attempts.jsonl`/`optimization_retrievals.jsonl`.
+- **Runner**: `kernelbench_runner.runner` builds/reads the store, passes a
+  child memory config to `optimize_one`, and ingests the trajectory plus the
+  final project-evaluator `task_result` record. Existing-task retest and
+  unseen-task transfer are separated by the anti-leakage rule below.
+- **Config/CLI**: `RunnerConfig` memory fields; `--memory-mode`,
+  `--memory-dir`, `--memory-snapshot-dir`, `--memory-max-items`,
+  `--memory-prompt-budget-chars`, `--memory-include-failures`,
+  `--memory-allow-foreign-compat`, `--memory-record-generation-traces`.
+  Offline tooling: `python -m kernelbench_runner.memory_cli
+  {inspect,inspect-runs,report,summarize,snapshot}`.
+- **Tests**: `tests/test_memory_*.py` (store, features, summary, retrieval,
+  integration, configs) run on CPU with memory off by default.
+- **Control configs**: `configs/memory_control_off.json`,
+  `memory_source_collect.json`, `memory_frozen_unseen_eval.json`,
+  `memory_continual_retest.json`.
+
+### Enforced anti-leakage rules
+
+- `off` mode does no reads and no writes.
+- `collect` mode writes evidence and never retrieves.
+- `frozen` mode retrieves only from `memory_snapshot_dir`; this run's writes go
+  to a separate `memory_dir`, so evaluation-task experience cannot leak into
+  the frozen treatment.
+- `continual` mode retrieves from, and appends to, the same store, but a task's
+  own records are only appended after it completes, so retrieval only ever sees
+  earlier tasks.
+- Retrieved items from the current task are excluded by default and reported as
+  **same-task reuse**, distinct from unseen-task transfer.
+
+### Measurement honesty
+
+- Only `task_result` records carry the project-evaluator
+  `task_speedup_vs_torch_compile`; that is separate from
+  `attempt.measurement.local_speedup` (parent-relative optimizer `do_bench`).
+- A compile error, failed verification, or unmeasured candidate stores
+  `available=false`, `local_speedup=null`, and an explicit `failure_category`.
+- NCU-derived SOL is stored with `scope="single_kernel_only"` and never labeled
+  as end-to-end multi-kernel state. Missing profiling is `status="unavailable"`.
+- `was_diagnosis_correct` is persisted as an LLM judgement, not a measured fact.
+
+### Not yet implemented (Planned)
+
+- Seed-generation memory integration (`generate_one.py`, `AutoKernelRouter`,
+  Fuser route propagation). Generation traces are optionally collected as
+  internal-test-only evidence but not retrieved.
+- Continual-update and frozen-memory **results** on A30 (no GPU/full-baseline
+  run has been performed for memory; see below).
+- LLM-authored strategy lessons (the summary builder is rule-based only).
+- Multi-kernel attribution beyond the single-kernel-scope caveat.
 
 ## Memory write
 
@@ -15,6 +97,7 @@ reference and candidate latency, speedup, generated kernel source, KernelAgent
 route/rounds, and task metadata. Keep failed generations and failed candidates
 as separate records with explicit error categories; never label an unverified
 candidate as a successful memory.
+
 
 Within the existing optimization loop, `OptimizationManager.run_optimization()`
 and `OptimizationOrchestrator._finalize_results()` are the task-final hooks.
@@ -122,6 +205,11 @@ not measured KernelAgent results, a reproduction of MAIC-RL, or recommended
 A30 hyperparameters copied from the paper.
 
 ## Proposed KernelAgent integration
+
+> Status note: the design below is now **implemented** except where a paragraph
+> is explicitly marked *(planned)* - specifically seed-generation retrieval,
+> LLM-authored lessons, and multi-kernel attribution. Where the prose says
+> "proposed"/"should", read it as the rationale for the code that exists.
 
 ### Preserve the existing search and add an experience layer
 
@@ -277,5 +365,32 @@ Retain memory only if repeated comparisons show better verified performance
 or lower cost to reach the same performance, without reduced correctness.
 An unsuccessful pilot is still informative: use retrieval logs to distinguish
 irrelevant states, missing evidence, ignored lessons, and measurement noise
-before adding a more complex retrieval backend. All stages above remain
-planned work; this document update itself introduces no runtime behavior.
+before adding a more complex retrieval backend.
+
+## Current status of the execution sequence
+
+The line between **implemented** and **planned** maps directly to code:
+
+1. **A30 baseline:** only a 5-task smoke/verify set exists
+   (`runs/l1_smoke_*`, `runs/l1_verify_*`). It has project-evaluator results but
+   **no profiling, optimization, attempt, or reflexion artifacts** because
+   `optimize` was `False`. `memory_cli inspect` reports these as explicitly
+   missing. A full L1 baseline is **not** an implementation prerequisite and is
+   deferred. *(partially available)*
+2. **Evidence-only instrumentation:** implemented (`collect` mode writes
+   `task_result` + `attempt` records; `memory_cli report` audits them). Manual
+   audit of a real trajectory still requires an optimization run.
+   *(implemented; not yet exercised on GPU)*
+3. **Frozen-memory pilot:** configs and retrieval/snapshot tooling are ready
+   (`memory_source_collect.json`, `memory_frozen_unseen_eval.json`,
+   `memory_control_off.json`, `memory_cli snapshot`); the GPU comparison has
+   **not** been run. *(ready, deferred)*
+4. **Continual-update experiment:** mode and anti-leakage ordering implemented;
+   `memory_continual_retest.json` is for existing-task retest reporting only.
+   *(ready, deferred)*
+5. **Optional extensions:** generation/seed memory, LLM-authored lessons,
+   multi-kernel attribution, and exploration allocation remain **planned**.
+
+GPU experiments and paid model calls are intentionally **not** started by this
+work. Existing-task retest and unseen-task transfer must be reported separately;
+reusing a task's own past solution measures reuse, not transfer.

@@ -7,7 +7,8 @@ commands, and the mistakes that waste the most time.
 Related docs:
 - `docs/KERNELBENCH_L1.md` — evaluation protocol and task semantics.
 - `docs/KERNELAGENT_ARCHITECTURE.md` — generation pipeline overview.
-- `docs/MEMORY_INTEGRATION_NOTES.md` — cross-task memory status and hook points.
+- `docs/MEMORY_INTEGRATION_NOTES.md` — cross-task memory schema, anti-leakage
+  rules, status (implemented vs planned), and hook points.
 - `docs/A30_SERVER_RUNBOOK.md` — the Docker-based runbook (do **not** use it on
   this host; see "Hard rules").
 
@@ -147,13 +148,23 @@ KernelAgent and evaluates them with `kernelbench_runner.evaluate_one`; it does
 
 Everything lands under `runs/<experiment_name>/`:
 
-- `config.json` — resolved configuration plus the evaluation/benchmark policy.
-- `task_results.jsonl` — one schema-v2 record per task.
+- `config.json` — resolved configuration plus the evaluation/benchmark policy;
+  includes a `memory` block (mode, directories, and the retrieval memory version
+  at run start) when memory is enabled.
+- `task_results.jsonl` — one schema-v2 record per task. When memory is enabled
+  each record's `metadata.memory` reports the memory version actually used, the
+  number of attempt/retrieval records ingested, and the mode.
 - `kernels/<NNN_task>/` — `kernel_function.py`, `ModelNew.py`,
   `task_result.json`, `kernelagent_result.json`,
-  `kernelagent_benchmark_result.json`.
-- `logs/<NNN_task>/` — `kernelagent.log`, `kernelagent_benchmark.log`.
+  `kernelagent_benchmark_result.json`; with memory on also
+  `memory_config.json`, and (with `--optimize`) `optimization_result.json`,
+  `kernel_function_optimized.py`.
+- `logs/<NNN_task>/` — `kernelagent.log`, `kernelagent_benchmark.log`; with
+  memory + `--optimize`, `optimization/optimization_attempts.jsonl` and
+  `optimization/optimization_retrievals.jsonl`.
 - `runner_console.log` — copy of the launcher stdout if you saved it.
+- Memory store (when enabled, default `memory/`) — `task_results.jsonl`,
+  `attempts.jsonl`, `summaries.jsonl`, `retrieval_log.jsonl`.
 
 Per-task `evaluation_status` is one of `passed`, `generation_failed`,
 `generation_timeout`, `adapter_failed`, `compile_failed`, `runtime_failed`,
@@ -166,13 +177,17 @@ pass once the `deepseek-flash` token budget fix is in place. `speedup < 1` is
 normal here because the baseline is `torch.compile` and the generated kernels are
 correctness-oriented, not tuned.
 
+**Baseline scope:** the current 5-task run (`runs/l1_smoke_*`, `runs/l1_verify_*`)
+is for **engineering flow validation only**. A full L1 baseline and any
+memory-benefit evaluation are deferred and are not prerequisites for the memory
+implementation.
+
 ## Optional optimization stage (`--optimize`) — currently OFF and blocked
 
 `kernelbench_runner` can run KernelAgent's hardware-guided `OptimizationManager`
-on a generated kernel before evaluation. It is **off by default** and should stay
-off for memory/self-evolution experiments (it is a per-task local search and
-would confound cross-task gains). Enable with `--optimize` plus
-`--optimization-strategy greedy|beam_search`, `--optimization-rounds`, etc.
+on a generated kernel before evaluation. It is **off by default**. Enable with
+`--optimize` plus `--optimization-strategy greedy|beam_search`,
+`--optimization-rounds`, etc.
 
 It cannot run in this container: `OptimizationManager` requires NVIDIA Nsight
 Compute (`ncu`), which needs GPU performance-counter access. NCU 2023.2.2 is
@@ -182,6 +197,57 @@ lacks `CAP_SYS_ADMIN` / `nvidia-caps` device access and the host driver has
 (`--cap-add SYS_ADMIN` + `/dev/nvidia-caps`, or
 `NVreg_RestrictProfilingToAdminUsers=0`). Until then `--optimize` degrades to a
 no-op and the original kernel is used.
+
+## Cross-task memory (`--memory-mode`) — implemented, default OFF
+
+`kernel_memory/` stores versioned, local, newline-delimited JSON experience.
+It is **off by default**; `--memory-mode off` (the default) preserves the
+previous behavior exactly.
+
+| Mode | Retrieval | Writes |
+| --- | --- | --- |
+| `off` (default) | none | none |
+| `collect` | none | task results + attempt evidence |
+| `frozen` | frozen snapshot only | this run's evidence (separate dir) |
+| `continual` | store at task start | append after each task |
+
+Flags: `--memory-mode`, `--memory-dir`, `--memory-snapshot-dir`,
+`--memory-max-items`, `--memory-prompt-budget-chars`,
+`--memory-include-failures`, `--memory-allow-foreign-compat`,
+`--memory-record-generation-traces`.
+
+Offline, CPU-only tooling (never starts GPU work or model calls):
+
+```bash
+PY=/data/root/venvs/kernelagent/bin/python3.10
+# Explicit coverage report for existing runs (missing data is marked, not inferred)
+$PY -m kernelbench_runner.memory_cli inspect-runs --output-root runs
+# Audit a memory store
+$PY -m kernelbench_runner.memory_cli report --store memory
+# Offline, rule-based strategy-summary construction
+$PY -m kernelbench_runner.memory_cli summarize --store memory
+# Freeze a snapshot for a frozen-memory experiment
+$PY -m kernelbench_runner.memory_cli snapshot --store memory \
+  --dest memory_snapshots/source_v1 --label source_v1
+```
+
+Retrieval is wired into the **optimization** stage (after the bottleneck
+diagnosis, before the optimization prompt). It is therefore only active when
+`--optimize` is also on. Static RAG examples and measured memory are rendered as
+separate prompt blocks. Seed-generation memory is not implemented.
+
+Control configs (no secrets; set `model`/`api_*` for your server):
+
+- `configs/memory_control_off.json` — control, memory off.
+- `configs/memory_source_collect.json` — build source-task memory.
+- `configs/memory_frozen_unseen_eval.json` — frozen memory on disjoint
+  held-out tasks.
+- `configs/memory_continual_retest.json` — continual update, existing-task
+  retest (report separately from unseen-task transfer).
+
+These configs are templates; running them is a separate, explicitly-started GPU
+experiment. See `docs/MEMORY_INTEGRATION_NOTES.md` for the schema, anti-leakage
+rules, and what is implemented versus planned.
 
 ## Hard rules
 
@@ -193,7 +259,8 @@ no-op and the original kernel is used.
   files, or KernelBench's upstream evaluator. Use a temp config/CLI overrides.
 - Do **not** use KernelBench's `eval.py`. Evaluation goes through
   `kernelbench_runner.evaluate_one` only.
-- Never commit `.env`, `runs/`, `.fuse/`, `triton_kernel_logs/`, or key values.
+- Never commit `.env`, `runs/`, `.fuse/`, `triton_kernel_logs/`, `memory/`,
+  `memory_snapshots/`, or key values.
 
 ## Common failure modes
 
@@ -205,3 +272,9 @@ no-op and the original kernel is used.
   whose completion budget is too small (see the `deepseek-flash` note above).
 - **Another run's results vanished**: `runs/` was cleaned. Confirm the Git root
   and `runs/` absolute path first; only clean `$(git rev-parse --show-toplevel)/runs`.
+- **Memory seems to do nothing**: retrieval is only wired into the optimization
+  stage, so `--memory-mode frozen|continual` needs `--optimize` too. `collect`
+  writes evidence without retrieving.
+- **Frozen mode errors on startup**: `frozen` requires `--memory-snapshot-dir`
+  (or `memory_snapshot_dir`); create it with
+  `python -m kernelbench_runner.memory_cli snapshot`.

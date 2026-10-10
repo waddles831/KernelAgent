@@ -57,6 +57,18 @@ class RunnerConfig:
     optimization_max_no_improvement: int = 3
     optimization_timeout_s: int = 3600
 
+    # Cross-task memory (off by default; off preserves legacy behavior).
+    # mode: off | collect | frozen | continual.  See docs/MEMORY_INTEGRATION_NOTES.md.
+    memory_mode: str = "off"
+    memory_dir: str = str(REPO_ROOT / "memory")
+    memory_snapshot_dir: str | None = None
+    memory_snapshot_label: str | None = None
+    memory_max_items: int = 3
+    memory_prompt_budget_chars: int = 4000
+    memory_include_failures: bool = True
+    memory_allow_foreign_compat: bool = False
+    memory_record_generation_traces: bool = False
+
     @classmethod
     def from_json(cls, path: Path) -> RunnerConfig:
         data = json.loads(path.read_text(encoding="utf-8"))
@@ -150,6 +162,27 @@ class RunnerConfig:
             raise ValueError("optimization round/search parameters must be positive")
         if self.optimization_timeout_s < 1:
             raise ValueError("optimization_timeout_s must be positive seconds")
+        memory = self.memory_config()
+        if memory is not None:
+            memory.validate()
+
+    def memory_config(self):
+        """Return a :class:`kernel_memory.MemoryConfig` or ``None`` when off."""
+        if (self.memory_mode or "off").strip().lower() == "off":
+            return None
+        from kernel_memory.store import MemoryConfig
+
+        return MemoryConfig(
+            mode=self.memory_mode,
+            store_dir=self.memory_dir,
+            snapshot_dir=self.memory_snapshot_dir,
+            snapshot_label=self.memory_snapshot_label,
+            max_items=self.memory_max_items,
+            prompt_budget_chars=self.memory_prompt_budget_chars,
+            include_failures=self.memory_include_failures,
+            allow_foreign_compat=self.memory_allow_foreign_compat,
+            record_generation_traces=self.memory_record_generation_traces,
+        )
 
     def resolved_kernelbench_root(self) -> Path:
         root = Path(self.kernelbench_path).expanduser()

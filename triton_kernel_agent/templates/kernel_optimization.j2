@@ -77,6 +77,10 @@ Study these techniques and code examples carefully. Adapt the patterns to the cu
 {{ rag_context }}
 {% endif %}
 
+{% if experience_context %}
+{{ experience_context }}
+{% endif %}
+
 {% if recent_attempts %}
 RECENT OPTIMIZATION ATTEMPTS:
 {% for attempt in recent_attempts %}

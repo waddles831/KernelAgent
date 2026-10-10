@@ -127,6 +127,10 @@ final_test.py
 runs/
 .optimize/
 
+# Cross-task memory stores and frozen snapshots (local, generated)
+memory/
+memory_snapshots/
+
 # IDE
 .vscode/
 .idea/

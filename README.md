@@ -205,6 +205,7 @@ cd examples && python run_opt_manager.py \
 | **BottleneckAnalyzer** | `triton_kernel_agent/opt_worker_component/prescribing/` | LLM-based bottleneck diagnosis |
 | **RooflineAnalyzer** | `kernel_perf_agent/kernel_opt/roofline/` | SOL classification and early stopping |
 | **Benchmark** | `triton_kernel_agent/opt_worker_component/benchmarking/` | CUDA event timing |
+| **kernel_memory** | `kernel_memory/` | Opt-in cross-task experience store (off by default) |
 
 ### Optimization Artifacts
 
@@ -217,6 +218,18 @@ cd examples && python run_opt_manager.py \
   round001_strategy.json     # bottleneck analysis result
   ...
 ```
+
+### Cross-Task Memory (opt-in, default off)
+
+KernelAgent can persist and reuse measured experience across tasks through the
+`kernel_memory/` sidecar. It is **off by default**; when disabled the generation
+and optimization paths are unchanged. Enable it through
+`kernelbench_runner` (`--memory-mode off|collect|frozen|continual`). Retrieval is
+wired into the iterative optimization stage, and static RAG examples and measured
+memory are shown as separate prompt blocks. See
+[docs/MEMORY_INTEGRATION_NOTES.md](docs/MEMORY_INTEGRATION_NOTES.md) for the
+record schema, anti-leakage rules, and the list of implemented versus planned
+pieces; see [docs/README.md](docs/README.md) for the runbook and CLI.
 
 ## Platform Support
 

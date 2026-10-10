@@ -421,6 +421,7 @@ def _nvidia_worker_process(
         attempt_data = metrics.get("last_attempt")
         reflexion_data = metrics.get("last_reflexion")
 
+        bridge = getattr(worker, "memory_bridge", None)
         result_queue.put(
             {
                 "success": success,
@@ -432,6 +433,11 @@ def _nvidia_worker_process(
                 "ptx_hash": metrics.get("best_ptx_hash"),
                 "attempt": attempt_data,
                 "reflexion": reflexion_data,
+                # Full collected trajectory (present only when memory is on).
+                "attempts": metrics.get("attempts"),
+                "reflexions": metrics.get("reflexions"),
+                "memory": metrics.get("memory"),
+                "retrievals": list(bridge.retrieval_records) if bridge else [],
             }
         )
 

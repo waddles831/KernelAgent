@@ -33,6 +33,7 @@ Example:
     ... )
 """
 
+import json
 import logging
 import multiprocessing as mp
 import tempfile
@@ -131,6 +132,7 @@ class OptimizationManager:
         bottleneck_override: str | None = None,
         platform: dict[str, str] | str | None = None,
         gpu_ids: list[int] | None = None,
+        memory_config: dict[str, Any] | None = None,
         **worker_kwargs: Any,
     ):
         """Initialize the optimization manager.
@@ -161,6 +163,15 @@ class OptimizationManager:
         self.high_reasoning_effort = high_reasoning_effort
         self.bottleneck_override = bottleneck_override
         self.worker_kwargs = worker_kwargs
+
+        # Cross-task memory: workers receive the read-only config for
+        # retrieval; the manager collects the full trajectory and is the sole
+        # writer of the raw evidence files (see _write_memory_evidence).
+        self.memory_config = memory_config
+        if memory_config is not None:
+            self.worker_kwargs["memory_config"] = memory_config
+        self._memory_evidence: list[dict[str, Any]] = []
+        self._memory_retrievals: list[dict[str, Any]] = []
 
         # Store template overrides (also stays in worker_kwargs for forwarding)
         self.templates_config = worker_kwargs.get("templates")
@@ -442,12 +453,14 @@ class OptimizationManager:
 
         # Verify initial kernel correctness before investing in benchmarks/optimization
         if not self._verify_initial_kernel(initial_kernel, problem_file, test_code):
+            memory_info = self._write_memory_evidence()
             return {
                 "success": False,
                 "kernel_code": None,
                 "best_time_ms": float("inf"),
                 "total_rounds": 0,
                 "top_kernels": [],
+                "memory": memory_info,
                 "error": "Initial kernel failed correctness verification",
             }
 
@@ -518,6 +531,7 @@ class OptimizationManager:
                 speedup_pt = pytorch_baseline / best.metrics.time_ms
                 self.logger.info(f"Speedup vs PyTorch eager: {speedup_pt:.2f}x")
 
+        memory_info = self._write_memory_evidence()
         return {
             "success": best is not None and best.metrics.time_ms != float("inf"),
             "kernel_code": best.kernel_code if best else None,
@@ -526,6 +540,7 @@ class OptimizationManager:
             "pytorch_baseline_ms": pytorch_baseline,
             "pytorch_compile_ms": pytorch_compile_time,
             "initial_kernel_time_ms": initial_kernel_time,
+            "memory": memory_info,
             "top_kernels": [
                 {
                     "kernel_code": p.kernel_code,
@@ -535,6 +550,43 @@ class OptimizationManager:
                 }
                 for p in self.database.get_top_k(5)
             ],
+        }
+
+    def _write_memory_evidence(self) -> dict[str, Any]:
+        """Persist the raw trajectory once; return a small summary.
+
+        No-op when memory is disabled.  Files are written into
+        ``memory_config['evidence_dir']`` for the outer runner to ingest, so
+        the persistent store is only ever written by a single process.
+        """
+        if self.memory_config is None:
+            return {"enabled": False, "mode": "off"}
+        evidence_dir = self.memory_config.get("evidence_dir") or self.log_dir
+        evidence_dir = Path(evidence_dir)
+        evidence_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            attempts_path = evidence_dir / "optimization_attempts.jsonl"
+            retrievals_path = evidence_dir / "optimization_retrievals.jsonl"
+            with attempts_path.open("w", encoding="utf-8") as handle:
+                for record in self._memory_evidence:
+                    handle.write(json.dumps(record, default=str) + "\n")
+            with retrievals_path.open("w", encoding="utf-8") as handle:
+                for record in self._memory_retrievals:
+                    handle.write(json.dumps(record, default=str) + "\n")
+        except OSError as exc:
+            self.logger.warning(f"failed to write memory evidence: {exc}")
+        memory_versions = {
+            record.get("memory_version")
+            for record in self._memory_retrievals
+            if record.get("memory_version")
+        }
+        return {
+            "enabled": True,
+            "mode": self.memory_config.get("mode", "collect"),
+            "evidence_dir": str(evidence_dir),
+            "attempt_records": len(self._memory_evidence),
+            "retrieval_records": len(self._memory_retrievals),
+            "memory_version_used": sorted(memory_versions),
         }
 
     # ------------------------------------------------------------------
@@ -603,6 +655,28 @@ class OptimizationManager:
                 self.shared_history.append(r["attempt"])
             if r.get("reflexion"):
                 self.shared_reflexions.append(r["reflexion"])
+
+        # Collect the full cross-task memory trajectory (successes,
+        # regressions and failures) and retrieval logs.  The manager is the
+        # single writer; workers never touch a shared database.
+        if self.memory_config is not None:
+            for r in results:
+                self._memory_evidence.append(
+                    {
+                        "worker_id": r.get("worker_id"),
+                        "round_num": round_num,
+                        "parent_id": r.get("parent_id"),
+                        "openai_model": r.get("openai_model"),
+                        "kernel_code": r.get("kernel_code"),
+                        "time_ms": r.get("time_ms"),
+                        "success": r.get("success"),
+                        "ptx_hash": r.get("ptx_hash"),
+                        "attempts": r.get("attempts"),
+                        "reflexions": r.get("reflexions"),
+                        "error": r.get("error"),
+                    }
+                )
+                self._memory_retrievals.extend(r.get("retrievals") or [])
 
         # Log errors from failed workers
         for r in results:

@@ -59,6 +59,7 @@ kernelbench-l1 = "kernelbench_runner.cli:main"
 include = [
     "triton_kernel_agent*",
     "kernel_perf_agent*",
+    "kernel_memory*",
     "Fuser*",
     "scripts",
     "utils",

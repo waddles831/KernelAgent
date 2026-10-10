@@ -72,9 +72,36 @@ def _parser() -> argparse.ArgumentParser:
             int,
         ),
         "optimization_timeout_s": ("--optimization-timeout-s", int),
+        "memory_mode": ("--memory-mode", str),
+        "memory_dir": ("--memory-dir", str),
+        "memory_snapshot_dir": ("--memory-snapshot-dir", str),
+        "memory_snapshot_label": ("--memory-snapshot-label", str),
+        "memory_max_items": ("--memory-max-items", int),
+        "memory_prompt_budget_chars": ("--memory-prompt-budget-chars", int),
     }
     for field_name, (flag, field_type) in overrides.items():
         parser.add_argument(flag, dest=field_name, type=field_type)
+    parser.add_argument(
+        "--memory-include-failures",
+        action=argparse.BooleanOptionalAction,
+        dest="memory_include_failures",
+        default=None,
+        help="Include regressions/failures in retrieved measured experience",
+    )
+    parser.add_argument(
+        "--memory-allow-foreign-compat",
+        action=argparse.BooleanOptionalAction,
+        dest="memory_allow_foreign_compat",
+        default=None,
+        help="Allow foreign-hardware measured items as hypotheses (revalidate)",
+    )
+    parser.add_argument(
+        "--memory-record-generation-traces",
+        action=argparse.BooleanOptionalAction,
+        dest="memory_record_generation_traces",
+        default=None,
+        help="Also store generation worker traces as internal-test evidence",
+    )
     parser.add_argument(
         "--optimize",
         action="store_true",

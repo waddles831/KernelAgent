@@ -229,6 +229,8 @@ class OptimizationOrchestrator:
         prior_history: list[dict] | None = None,
         prior_reflexions: list[dict] | None = None,
         rag_prescriber: Any | None = None,
+        memory_bridge: Any | None = None,
+        collect_full_trajectory: bool = False,
     ):
         """
         Initialize optimization orchestrator.
@@ -288,6 +290,13 @@ class OptimizationOrchestrator:
 
         # Optional RAG prescriber
         self.rag_prescriber = rag_prescriber
+
+        # Optional cross-task memory bridge (read-only measured experience)
+        self.memory_bridge = memory_bridge
+        # When true, the full attempt/reflexion trajectory is exported so the
+        # manager can persist every success, regression and failure - not just
+        # the final attempt.
+        self.collect_full_trajectory = collect_full_trajectory
 
         # Bottleneck selection for beam search diversity (1-indexed)
         self.bottleneck_id = bottleneck_id
@@ -459,6 +468,24 @@ class OptimizationOrchestrator:
                 except Exception as e:
                     self.logger.warning(f"[{round_num}] RAG retrieval failed: {e}")
 
+            # Cross-task measured-memory retrieval.  This happens *after* the
+            # diagnosis (primary bottleneck) is known and *before* the
+            # optimization prompt is rendered, as required by the memory design.
+            experience_context = None
+            if self.memory_bridge is not None:
+                try:
+                    experience_context = self.memory_bridge.build_context(
+                        bottleneck_category=primary.category,
+                        bottleneck_summary=primary.summary,
+                        round_num=round_num,
+                        worker_id=0,
+                    )
+                except Exception as e:
+                    self.logger.warning(
+                        f"[{round_num}] memory retrieval failed: {e}"
+                    )
+                    experience_context = None
+
             opt_prompt = self.prompt_manager.render_kernel_optimization_prompt(
                 problem_description=problem_description,
                 kernel_code=current_kernel,
@@ -479,6 +506,7 @@ class OptimizationOrchestrator:
                 if self.reflexions
                 else None,
                 rag_context=rag_context,
+                experience_context=experience_context,
             )
 
             # Save prompt
@@ -1267,11 +1295,23 @@ class OptimizationOrchestrator:
         if early_stop_reason:
             perf_metrics["early_stop_reason"] = early_stop_reason
 
-        # Include last attempt and reflexion for shared history (beam search)
+        # Include last attempt and reflexion for shared history (beam search).
+        # When full-trajectory collection is enabled, export every attempt and
+        # reflexion so success, regression and failure evidence is preserved.
+        if self.collect_full_trajectory:
+            perf_metrics["attempts"] = [asdict(a) for a in self.attempt_history]
+            perf_metrics["reflexions"] = [asdict(r) for r in self.reflexions]
         if self.attempt_history:
             perf_metrics["last_attempt"] = asdict(self.attempt_history[-1])
         if self.reflexions:
             perf_metrics["last_reflexion"] = asdict(self.reflexions[-1])
+        if self.memory_bridge is not None:
+            try:
+                perf_metrics["memory"] = self.memory_bridge.summary()
+            except Exception:
+                pass
+        else:
+            perf_metrics["memory"] = {"enabled": False, "mode": "off"}
 
         success = best_runtime_time != float("inf") and any_verified
         return success, best_runtime_kernel, perf_metrics

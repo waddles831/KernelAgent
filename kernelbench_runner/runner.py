@@ -18,6 +18,16 @@ from .config import REPO_ROOT, RunnerConfig
 from .schema import TaskResult
 
 
+def _memory_enabled_helpers():
+    """Import memory helpers lazily so off-mode runs have no import cost."""
+    from kernel_memory import integration as memory_integration
+    from kernel_memory import collector as memory_collector
+    from kernel_memory.features import extract_task_features
+    from kernel_memory.store import MemoryStore
+
+    return memory_integration, memory_collector, extract_task_features, MemoryStore
+
+
 def _json_safe(value: Any) -> Any:
     if isinstance(value, float) and not math.isfinite(value):
         return str(value)
@@ -222,6 +232,143 @@ def _result_status(
     return "passed"
 
 
+def _compat_from_evaluation(
+    evaluation: dict[str, Any] | None,
+    config: RunnerConfig,
+    *,
+    build_compatibility,
+) -> dict[str, Any]:
+    """Compatibility fingerprint from evaluator metadata, else best-effort."""
+    meta = (evaluation or {}).get("metadata") or {}
+    return build_compatibility(
+        gpu_name=meta.get("gpu"),
+        torch_version=meta.get("torch_version"),
+        triton_version=meta.get("triton_version"),
+        cuda_version=None,
+        gpu_arch=config.gpu_arch,
+        model=config.model,
+    )
+
+
+def _child_memory_payload(memory_config) -> dict[str, Any]:
+    return {
+        "mode": memory_config.normalized_mode(),
+        "store_dir": str(memory_config.retrieval_dir()),
+        "snapshot_dir": (
+            str(memory_config.resolved_snapshot_dir())
+            if memory_config.is_frozen()
+            else None
+        ),
+        "snapshot_label": memory_config.snapshot_label,
+        "max_items": memory_config.max_items,
+        "prompt_budget_chars": memory_config.prompt_budget_chars,
+        "include_failures": memory_config.include_failures,
+        "allow_foreign_compat": memory_config.allow_foreign_compat,
+    }
+
+
+def _ingest_task_memory(
+    *,
+    memory_config,
+    run_id: str,
+    task_id: int,
+    task_name: str,
+    task_path: Path,
+    result_dict: dict[str, Any],
+    agent_metadata: dict[str, Any] | None,
+    optimization_metadata: dict[str, Any] | None,
+    compatibility: dict[str, Any],
+    write_store,
+) -> dict[str, Any]:
+    """Normalize and persist this task's memory evidence.
+
+    Returns a small info dict for the task result metadata.  This is the only
+    place the persistent store is appended on the task path.
+    """
+    _, collector, extract_task_features, _ = _memory_enabled_helpers()
+    task_features = extract_task_features(task_path)
+
+    evidence_dir = (
+        (optimization_metadata or {}).get("memory", {}).get("evidence_dir")
+        if optimization_metadata
+        else None
+    )
+    retrieval_records: list[dict[str, Any]] = []
+    if evidence_dir:
+        retrieval_records = collector.read_jsonl(
+            Path(evidence_dir) / "optimization_retrievals.jsonl"
+        )
+
+    memory_versions = sorted(
+        {
+            record.get("memory_version")
+            for record in retrieval_records
+            if record.get("memory_version")
+        }
+    )
+    memory_version_used = memory_versions[0] if memory_versions else None
+
+    attempt_records: list[dict[str, Any]] = []
+    if evidence_dir:
+        raw_evidence = collector.read_jsonl(
+            Path(evidence_dir) / "optimization_attempts.jsonl"
+        )
+        attempt_records.extend(
+            collector.attempt_records_from_optimization_evidence(
+                raw_evidence,
+                run_id=run_id,
+                task_id=task_id,
+                task_name=task_name,
+                task_features=task_features,
+                compatibility=compatibility,
+                memory_version=memory_version_used,
+            )
+        )
+
+    generation_count = 0
+    if memory_config.record_generation_traces and agent_metadata:
+        session_dir = (agent_metadata.get("details") or {}).get("session_dir")
+        if session_dir:
+            generation_records = collector.generation_attempt_records_from_session(
+                session_dir,
+                run_id=run_id,
+                task_id=task_id,
+                task_name=task_name,
+                task_features=task_features,
+                compatibility=compatibility,
+                memory_version=memory_version_used,
+            )
+            generation_count = len(generation_records)
+            attempt_records.extend(generation_records)
+
+    task_record = collector.task_result_record_from_result(
+        result_dict,
+        run_id=run_id,
+        task_id=task_id,
+        task_name=task_name,
+        task_features=task_features,
+        compatibility=compatibility,
+        memory_version_used=memory_version_used,
+        memory_mode_used=memory_config.normalized_mode(),
+    )
+
+    write_store.append_task_results([task_record])
+    if attempt_records:
+        write_store.append_attempts(attempt_records)
+    if retrieval_records:
+        write_store.append_retrievals(retrieval_records)
+
+    return {
+        "mode": memory_config.normalized_mode(),
+        "memory_version_used": memory_version_used,
+        "memory_versions_used": memory_versions,
+        "attempt_records": len(attempt_records),
+        "optimization_attempts": len(attempt_records) - generation_count,
+        "generation_attempts": generation_count,
+        "retrieval_records": len(retrieval_records),
+    }
+
+
 def run_experiment(
     config: RunnerConfig,
     *,
@@ -232,6 +379,19 @@ def run_experiment(
     task_map = _l1_task_map(kernelbench_root)
     task_paths = select_tasks(task_map, config, select_all)
     env = _prepare_environment(config)
+
+    run_id = config.experiment_name
+    memory_config = config.memory_config()
+    write_store = None
+    retrieval_store = None
+    memory_build_compatibility = None
+    if memory_config is not None:
+        memory_integration, _, _, MemoryStore = _memory_enabled_helpers()
+        memory_build_compatibility = memory_integration.build_compatibility
+        if memory_config.write_enabled():
+            write_store = MemoryStore(memory_config.write_dir(), read_only=False)
+        if memory_config.retrieval_enabled():
+            retrieval_store = MemoryStore(memory_config.retrieval_dir(), read_only=True)
 
     run_dir = config.resolved_output_root() / config.experiment_name
     run_dir.mkdir(parents=True, exist_ok=False)
@@ -261,6 +421,19 @@ def run_experiment(
         "visible_device_index": 0,
         "gpu_arch": config.gpu_arch,
     }
+    if memory_config is not None:
+        memory_public = memory_config.public_dict()
+        memory_public["retrieval_memory_version_at_start"] = (
+            retrieval_store.memory_version() if retrieval_store is not None else None
+        )
+        memory_public["frozen_snapshot_version"] = (
+            retrieval_store.read_version_info().get("memory_version")
+            if memory_config.is_frozen() and retrieval_store is not None
+            else None
+        )
+        config_record["memory"] = memory_public
+    else:
+        config_record["memory"] = {"mode": "off"}
     (run_dir / "config.json").write_text(
         json.dumps(config_record, indent=2, ensure_ascii=False) + "\n",
         encoding="utf-8",
@@ -363,6 +536,29 @@ def run_experiment(
             ]
             for architecture in config.gpu_arch:
                 optimization_command.extend(["--gpu-arch", architecture])
+            if memory_config is not None:
+                child_memory_path = task_artifacts / "memory_config.json"
+                child_memory_path.write_text(
+                    json.dumps(
+                        _child_memory_payload(memory_config),
+                        indent=2,
+                        ensure_ascii=False,
+                    )
+                    + "\n",
+                    encoding="utf-8",
+                )
+                optimization_command.extend(
+                    [
+                        "--memory-config",
+                        str(child_memory_path),
+                        "--run-id",
+                        run_id,
+                        "--task-id",
+                        str(task_id),
+                        "--task-name",
+                        task_name,
+                    ]
+                )
             _, optimization_timed_out = _run_child(
                 optimization_command,
                 cwd=REPO_ROOT,
@@ -528,6 +724,30 @@ def run_experiment(
             },
         )
         result_path = task_artifacts / "task_result.json"
+
+        if memory_config is not None and write_store is not None:
+            try:
+                compatibility = _compat_from_evaluation(
+                    evaluation, config, build_compatibility=memory_build_compatibility
+                )
+                memory_info = _ingest_task_memory(
+                    memory_config=memory_config,
+                    run_id=run_id,
+                    task_id=task_id,
+                    task_name=task_name,
+                    task_path=task_path,
+                    result_dict=result.to_dict(),
+                    agent_metadata=agent_metadata,
+                    optimization_metadata=optimization_metadata,
+                    compatibility=compatibility,
+                    write_store=write_store,
+                )
+                result.metadata["memory"] = memory_info
+            except Exception as exc:  # memory must not break the run
+                result.metadata["memory"] = {
+                    "error": f"{exc.__class__.__name__}: {exc}"
+                }
+
         result_path.write_text(
             json.dumps(result.to_dict(), indent=2, ensure_ascii=False) + "\n",
             encoding="utf-8",

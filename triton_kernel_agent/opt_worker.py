@@ -104,6 +104,8 @@ class OptimizationWorker:
         platform_config: dict[str, str] | None = None,
         # Template overrides from YAML config ─────────────────────
         templates: dict[str, str] | None = None,
+        # Cross-task memory config (read-only retrieval inside the worker) ──
+        memory_config: dict[str, Any] | None = None,
     ):
         """
         Initialize the optimization worker.
@@ -158,6 +160,23 @@ class OptimizationWorker:
 
         # Template overrides (forwarded to PromptManager)
         self.templates_config = templates
+
+        # Cross-task memory (optional, read-only).  A bridge is created only
+        # when retrieval is enabled; collection is handled by the manager.
+        self.memory_config = memory_config
+        self.memory_bridge = None
+        if memory_config:
+            try:
+                from kernel_memory.integration import MemoryBridge
+
+                self.memory_bridge = MemoryBridge(
+                    memory_config, logger=logging.getLogger(f"opt_worker_{worker_id}")
+                )
+            except Exception as exc:  # never let memory break optimization
+                logging.getLogger(f"opt_worker_{worker_id}").warning(
+                    f"memory bridge disabled: {exc}"
+                )
+                self.memory_bridge = None
 
         # BeamSearch parameters
         self.bottleneck_id = bottleneck_id
@@ -425,6 +444,8 @@ class OptimizationWorker:
             bottleneck_id=self.bottleneck_id,
             bottleneck_override=self.bottleneck_override,
             rag_prescriber=self.rag_prescriber,
+            memory_bridge=self.memory_bridge,
+            collect_full_trajectory=bool(self.memory_config),
             # Shared history from beam search manager
             prior_history=self.prior_history,
             prior_reflexions=self.prior_reflexions,

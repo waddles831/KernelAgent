@@ -255,6 +255,7 @@ class PromptManager:
         recent_attempts: list | None = None,
         reflexions: list | None = None,
         rag_context: str | None = None,
+        experience_context: str | None = None,
     ) -> str:
         """
         Render the kernel optimization prompt.
@@ -276,7 +277,11 @@ class PromptManager:
             error_feedback: Error message from previous failed attempt
             recent_attempts: List of recent OptimizationAttempt objects for history
             reflexions: List of Reflexion objects for self-reflection analysis
-            rag_context: Optional RAG-retrieved context with optimization patterns and code examples
+            rag_context: RAG-retrieved static optimization patterns and code
+                examples (general patterns, not measured experience).
+            experience_context: Optional measured cross-task experience block.
+                When present it is labeled as measured (unlike the static RAG
+                examples) and must not be treated as a guarantee.
 
         Returns:
             Rendered prompt string
@@ -303,6 +308,7 @@ class PromptManager:
             recent_attempts=recent_attempts,
             reflexions=reflexions,
             rag_context=rag_context,
+            experience_context=experience_context,
         )
 
     def render_reflexion_prompt(self, attempt) -> str:
