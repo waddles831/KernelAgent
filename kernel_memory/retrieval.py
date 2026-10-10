@@ -137,6 +137,54 @@ def _item_from_attempt(
     }
 
 
+def _item_from_task_result(
+    record: dict[str, Any],
+    *,
+    compat_key: str,
+    task_features: dict[str, Any],
+    current_task_id: int,
+) -> dict[str, Any]:
+    speedup = record.get("task_speedup_vs_torch_compile")
+    source_features = record.get("task_features") or {}
+    observed_bits = [f"final status={record.get('evaluation_status')}"]
+    if speedup is not None:
+        observed_bits.append(f"task speedup vs torch.compile {float(speedup):.3f}x")
+    ops = ", ".join(source_features.get("op_hints") or []) or "unknown ops"
+    return {
+        "kind": "task_result",
+        "source_id": record.get("record_id"),
+        "version": None,
+        "compatibility_match": (record.get("compatibility") or {}).get(
+            "compatibility_key"
+        )
+        == compat_key,
+        "compatibility_key": (record.get("compatibility") or {}).get("compatibility_key"),
+        "bottleneck_match": False,
+        "bottleneck_category": None,
+        "task_similarity": task_similarity(task_features, source_features),
+        "same_task": int(record.get("task_id", -1)) == int(current_task_id),
+        "source_task_ids": [record.get("task_id")],
+        "action": "final verified program for a similar task",
+        "transformation_tags": [],
+        "applicability": f"ops=[{ops}]; route={record.get('route')}",
+        "observed": "; ".join(observed_bits),
+        "caveat": (
+            "task-level project-evaluator result (vs torch.compile); not a "
+            "per-kernel action and not parent-relative"
+        ),
+        "confidence": None,
+        "support": 1,
+        "regressions": 1 if (speedup is not None and float(speedup) < 1.0) else 0,
+        "evidence_ids": [record.get("record_id")],
+        "correctness_status": record.get("correctness_status", "unknown"),
+        "measurement_available": speedup is not None,
+        "is_failure": (
+            record.get("correctness_status") in ("project_failed",)
+            or speedup is None
+        ),
+    }
+
+
 def _attempt_applicability(attempt: dict[str, Any]) -> str:
     features = attempt.get("task_features") or {}
     ops = ", ".join(features.get("op_hints") or []) or "unknown ops"
@@ -177,8 +225,18 @@ def retrieve_measured(
     compat_key = compatibility.get("compatibility_key")
     summaries = store.read_summaries()
     attempts = store.read_attempts()
+    task_results = store.read_task_results()
 
     candidates: list[dict[str, Any]] = []
+    for record in task_results:
+        candidates.append(
+            _item_from_task_result(
+                record,
+                compat_key=compat_key,
+                task_features=task_features,
+                current_task_id=current_task_id,
+            )
+        )
     for summary in summaries:
         candidates.append(
             _item_from_summary(
@@ -233,11 +291,14 @@ def retrieve_measured(
     deduped: list[dict[str, Any]] = []
     seen: set[tuple[str, str, str]] = set()
     for item in sorted(filtered, key=lambda i: _score(i, compat_key=compat_key), reverse=True):
-        key = (
-            str(item.get("kind")),
-            str(item.get("bottleneck_category")),
-            str(item.get("action"))[:120],
-        )
+        if item.get("kind") == "task_result":
+            key = ("task_result", str(item.get("source_id")), "")
+        else:
+            key = (
+                str(item.get("kind")),
+                str(item.get("bottleneck_category")),
+                str(item.get("action"))[:120],
+            )
         if key in seen:
             continue
         seen.add(key)
