@@ -47,6 +47,16 @@ class RunnerConfig:
     task_ids: list[int] | None = None
     task_range: list[int] | None = None
 
+    # Optional hardware-guided optimization stage (KernelAgent
+    # OptimizationManager) run on the generated kernel before evaluation.
+    optimize: bool = False
+    optimization_strategy: str = "greedy"
+    optimization_rounds: int = 3
+    optimization_top_kernels: int = 2
+    optimization_bottlenecks: int = 2
+    optimization_max_no_improvement: int = 3
+    optimization_timeout_s: int = 3600
+
     @classmethod
     def from_json(cls, path: Path) -> RunnerConfig:
         data = json.loads(path.read_text(encoding="utf-8"))
@@ -127,6 +137,19 @@ class RunnerConfig:
                 raise ValueError("task_range must be an inclusive positive ID range")
         if self.task_ids is not None and self.task_range is not None:
             raise ValueError("Choose task_ids or task_range, not both")
+        if self.optimization_strategy not in ("greedy", "beam_search"):
+            raise ValueError(
+                "optimization_strategy must be 'greedy' or 'beam_search'"
+            )
+        if (
+            self.optimization_rounds < 1
+            or self.optimization_top_kernels < 1
+            or self.optimization_bottlenecks < 1
+            or self.optimization_max_no_improvement < 1
+        ):
+            raise ValueError("optimization round/search parameters must be positive")
+        if self.optimization_timeout_s < 1:
+            raise ValueError("optimization_timeout_s must be positive seconds")
 
     def resolved_kernelbench_root(self) -> Path:
         root = Path(self.kernelbench_path).expanduser()

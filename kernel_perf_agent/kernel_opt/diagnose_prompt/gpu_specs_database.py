@@ -96,6 +96,23 @@ _GPU_SPECS_DATABASE: dict[str, dict[str, object]] = {
         "form_factor": "PCIe",
         "tdp_w": 300,
     },
+    # NVIDIA A30 (Ampere GA100, 24GB HBM2)
+    "NVIDIA A30": {
+        "name": "NVIDIA A30",
+        "architecture": "Ampere",
+        "peak_fp32_tflops": 10.3,
+        "peak_fp16_tflops": 165.0,  # Tensor Core, without sparsity
+        "peak_bf16_tflops": 165.0,  # Tensor Core, without sparsity
+        "peak_memory_bw_gbps": 933,
+        "sm_count": 56,
+        "max_threads_per_sm": 2048,
+        "l1_cache_kb": 192,
+        "l2_cache_mb": 24,
+        "memory_gb": 24,
+        "memory_type": "HBM2",
+        "form_factor": "PCIe",
+        "tdp_w": 165,
+    },
     # NVIDIA H100 SKUs - SXM5 Variant
     "NVIDIA H100 SXM5 80GB": {
         "name": "NVIDIA H100 SXM5 80GB",

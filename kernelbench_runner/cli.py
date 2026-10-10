@@ -63,9 +63,25 @@ def _parser() -> argparse.ArgumentParser:
         "llm_timeout_s": ("--llm-timeout-s", int),
         "agent_test_timeout_s": ("--agent-test-timeout-s", int),
         "evaluation_timeout_s": ("--evaluation-timeout-s", int),
+        "optimization_strategy": ("--optimization-strategy", str),
+        "optimization_rounds": ("--optimization-rounds", int),
+        "optimization_top_kernels": ("--optimization-top-kernels", int),
+        "optimization_bottlenecks": ("--optimization-bottlenecks", int),
+        "optimization_max_no_improvement": (
+            "--optimization-max-no-improvement",
+            int,
+        ),
+        "optimization_timeout_s": ("--optimization-timeout-s", int),
     }
     for field_name, (flag, field_type) in overrides.items():
         parser.add_argument(flag, dest=field_name, type=field_type)
+    parser.add_argument(
+        "--optimize",
+        action="store_true",
+        dest="optimize",
+        default=None,
+        help="Run the KernelAgent OptimizationManager on generated kernels",
+    )
     parser.add_argument(
         "--gpu-arch",
         action="append",

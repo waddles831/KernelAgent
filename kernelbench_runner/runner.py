@@ -282,9 +282,11 @@ def run_experiment(
 
         started = time.perf_counter()
         generation_timed_out = False
+        optimization_timed_out = False
         evaluation_timed_out = False
         adapter_error: str | None = None
         agent_metadata: dict[str, Any] = {}
+        optimization_metadata: dict[str, Any] = {}
         evaluation: dict[str, Any] | None = None
 
         generation_command = [
@@ -323,6 +325,54 @@ def run_experiment(
             and agent_metadata.get("success")
             and kernel_path.is_file()
         )
+
+        # Optional hardware-guided optimization stage.  It runs in its own
+        # process (the GPU is not yet initialized) and only replaces the
+        # generated kernel when it finds a verified-faster best candidate.
+        if agent_success and config.optimize:
+            optimized_kernel_path = task_artifacts / "kernel_function_optimized.py"
+            optimization_result_path = task_artifacts / "optimization_result.json"
+            optimization_command = [
+                sys.executable,
+                "-m",
+                "kernelbench_runner.optimize_one",
+                "--problem",
+                str(task_path),
+                "--kernel",
+                str(kernel_path),
+                "--output",
+                str(optimized_kernel_path),
+                "--metadata-output",
+                str(optimization_result_path),
+                "--log-dir",
+                str(task_logs / "optimization"),
+                "--model",
+                config.model,
+                "--strategy",
+                config.optimization_strategy,
+                "--rounds",
+                str(config.optimization_rounds),
+                "--top-kernels",
+                str(config.optimization_top_kernels),
+                "--bottlenecks",
+                str(config.optimization_bottlenecks),
+                "--max-no-improvement",
+                str(config.optimization_max_no_improvement),
+                "--gpu-id",
+                str(config.gpu_id),
+            ]
+            for architecture in config.gpu_arch:
+                optimization_command.extend(["--gpu-arch", architecture])
+            _, optimization_timed_out = _run_child(
+                optimization_command,
+                cwd=REPO_ROOT,
+                env=env,
+                log_path=task_logs / "optimization.log",
+                timeout_s=config.optimization_timeout_s,
+            )
+            optimization_metadata = _read_json(optimization_result_path)
+            if optimized_kernel_path.is_file():
+                kernel_path = optimized_kernel_path
 
         if agent_success:
             try:
@@ -410,6 +460,18 @@ def run_experiment(
                     if evaluation_timed_out
                     else None
                 ),
+                (
+                    f"optimization: {optimization_metadata.get('error')}"
+                    if config.optimize
+                    and optimization_metadata
+                    and not optimization_metadata.get("optimized")
+                    else None
+                ),
+                (
+                    f"Optimization timed out after {config.optimization_timeout_s}s"
+                    if optimization_timed_out
+                    else None
+                ),
             )
             if item
         ]
@@ -440,13 +502,15 @@ def run_experiment(
             metadata={
                 "kernelagent": agent_metadata,
                 "benchmark": evaluation or {},
+                "optimization": optimization_metadata or {},
                 "llm_calls_note": (
                     "KernelAgent does not expose aggregate LLM call counts "
                     "in its current result API"
                 ),
                 "beam_width_note": (
-                    "Recorded for reproducibility; the KernelAgent generation "
-                    "baseline does not invoke OptimizationManager beam search"
+                    "Recorded for reproducibility; OptimizationManager beam "
+                    "search runs only when optimize is enabled (beam_width maps "
+                    "to optimization_top_kernels)"
                 ),
             },
             artifacts={
@@ -456,6 +520,11 @@ def run_experiment(
                 "kernelagent_benchmark_log": str(task_logs / "kernelagent_benchmark.log"),
                 "kernelagent_result": str(agent_metadata_path),
                 "kernelagent_benchmark_result": str(evaluation_path),
+                "optimization_log": str(task_logs / "optimization.log"),
+                "optimization_result": str(task_artifacts / "optimization_result.json"),
+                "optimized_kernel_function": str(
+                    task_artifacts / "kernel_function_optimized.py"
+                ),
             },
         )
         result_path = task_artifacts / "task_result.json"
