@@ -1,4 +1,4 @@
-"""Sequential KernelAgent → KernelBench L1 experiment runner."""
+"""Sequential KernelAgent → KernelBench-task benchmark runner."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ import sys
 import time
 from typing import Any
 
-from .adapter import wrap_kernel_for_kernelbench
+from .adapter import wrap_kernel_as_modelnew
 from .config import REPO_ROOT, RunnerConfig
 from .schema import TaskResult
 
@@ -71,7 +71,7 @@ def select_tasks(
     return [task_map[task_id] for task_id in selected_ids]
 
 
-def _prepare_environment(config: RunnerConfig, kernelbench_root: Path) -> dict[str, str]:
+def _prepare_environment(config: RunnerConfig) -> dict[str, str]:
     if not os.environ.get(config.api_key_env):
         try:
             from dotenv import load_dotenv
@@ -94,7 +94,7 @@ def _prepare_environment(config: RunnerConfig, kernelbench_root: Path) -> dict[s
         env["OPENAI_BASE_URL"] = config.api_base_url
     env["OPENAI_MODEL"] = config.model
     env["CUDA_VISIBLE_DEVICES"] = str(config.gpu_id)
-    python_path = [str(REPO_ROOT), str(kernelbench_root / "src")]
+    python_path = [str(REPO_ROOT)]
     if env.get("PYTHONPATH"):
         python_path.append(env["PYTHONPATH"])
     env["PYTHONPATH"] = os.pathsep.join(python_path)
@@ -217,7 +217,7 @@ def _result_status(
         return "runtime_failed"
     if not evaluation.get("correct"):
         return "incorrect"
-    if _positive_float(evaluation.get("best_latency_ms")) is None:
+    if _positive_float(evaluation.get("candidate_latency_ms")) is None:
         return "timing_failed"
     return "passed"
 
@@ -231,7 +231,7 @@ def run_experiment(
     kernelbench_root = config.resolved_kernelbench_root()
     task_map = _l1_task_map(kernelbench_root)
     task_paths = select_tasks(task_map, config, select_all)
-    env = _prepare_environment(config, kernelbench_root)
+    env = _prepare_environment(config)
 
     run_dir = config.resolved_output_root() / config.experiment_name
     run_dir.mkdir(parents=True, exist_ok=False)
@@ -241,8 +241,21 @@ def run_experiment(
     config_record["selected_task_ids"] = [
         int(path.name.split("_", 1)[0]) for path in task_paths
     ]
-    config_record["kernelbench_level"] = 1
-    config_record["kernelbench_evaluator"] = "kernelbench.eval.eval_kernel_against_ref"
+    config_record["problem_set"] = "KernelBench L1"
+    config_record["problem_set_source"] = "local task definitions only"
+    config_record["correctness_evaluator"] = "kernelbench_runner.evaluate_one"
+    config_record["performance_benchmark"] = {
+        "method": "triton.testing.do_bench",
+        "baseline": {
+            "name": "torch.compile",
+            "mode": "default",
+            "dynamic_shapes": False,
+            "cuda_graphs": False,
+        },
+        "warmup_ms": config.benchmark_warmup_ms,
+        "rep_ms": config.benchmark_rep_ms,
+        "return_mode": "mean",
+    }
     config_record["gpu_selection"] = {
         "physical_id": config.gpu_id,
         "visible_device_index": 0,
@@ -265,7 +278,7 @@ def run_experiment(
         kernel_path = task_artifacts / "kernel_function.py"
         agent_metadata_path = task_artifacts / "kernelagent_result.json"
         modelnew_path = task_artifacts / "ModelNew.py"
-        evaluation_path = task_artifacts / "kernelbench_result.json"
+        evaluation_path = task_artifacts / "kernelagent_benchmark_result.json"
 
         started = time.perf_counter()
         generation_timed_out = False
@@ -315,7 +328,7 @@ def run_experiment(
             try:
                 kernel_source = kernel_path.read_text(encoding="utf-8")
                 reference_source = task_path.read_text(encoding="utf-8")
-                modelnew_source = wrap_kernel_for_kernelbench(
+                modelnew_source = wrap_kernel_as_modelnew(
                     reference_source, kernel_source
                 )
                 modelnew_path.write_text(modelnew_source, encoding="utf-8")
@@ -337,24 +350,26 @@ def run_experiment(
                 str(config.random_seed),
                 "--num-correct-trials",
                 str(config.num_correct_trials),
-                "--num-perf-trials",
-                str(config.num_perf_trials),
-                "--timing-method",
-                config.timing_method,
+                "--warmup-ms",
+                str(config.benchmark_warmup_ms),
+                "--rep-ms",
+                str(config.benchmark_rep_ms),
+                "--gpu-lock-id",
+                str(config.gpu_id),
             ]
             for architecture in config.gpu_arch:
                 evaluation_command.extend(["--gpu-arch", architecture])
             evaluation_code, evaluation_timed_out = _run_child(
                 evaluation_command,
-                cwd=kernelbench_root,
+                cwd=REPO_ROOT,
                 env=env,
-                log_path=task_logs / "kernelbench.log",
+                log_path=task_logs / "kernelagent_benchmark.log",
                 timeout_s=config.evaluation_timeout_s,
             )
             evaluation = _read_json(evaluation_path)
             if evaluation_code not in (0, None) and not evaluation:
                 evaluation = {
-                    "error": f"KernelBench evaluator exited with status {evaluation_code}"
+                    "error": f"KernelAgent benchmark exited with status {evaluation_code}"
                 }
 
         compile_success = (
@@ -369,8 +384,10 @@ def run_experiment(
         baseline_latency = (
             _positive_float(evaluation.get("baseline_latency_ms")) if evaluation else None
         )
-        best_latency = (
-            _positive_float(evaluation.get("best_latency_ms")) if evaluation else None
+        candidate_latency = (
+            _positive_float(evaluation.get("candidate_latency_ms"))
+            if evaluation
+            else None
         )
         speedup = (
             _positive_float(evaluation.get("speedup")) if evaluation else None
@@ -389,7 +406,7 @@ def run_experiment(
                     else None
                 ),
                 (
-                    f"KernelBench evaluation timed out after {config.evaluation_timeout_s}s"
+                    f"KernelAgent benchmark timed out after {config.evaluation_timeout_s}s"
                     if evaluation_timed_out
                     else None
                 ),
@@ -411,7 +428,7 @@ def run_experiment(
             runtime_success=runtime_success,
             correct=correct,
             baseline_latency_ms=baseline_latency,
-            best_latency_ms=best_latency,
+            candidate_latency_ms=candidate_latency,
             speedup=speedup,
             iterations=_agent_iterations(agent_metadata),
             candidate_count=_agent_candidate_count(agent_metadata),
@@ -422,7 +439,7 @@ def run_experiment(
             error="; ".join(str(item) for item in errors) or None,
             metadata={
                 "kernelagent": agent_metadata,
-                "kernelbench": evaluation or {},
+                "benchmark": evaluation or {},
                 "llm_calls_note": (
                     "KernelAgent does not expose aggregate LLM call counts "
                     "in its current result API"
@@ -436,9 +453,9 @@ def run_experiment(
                 "kernel_function": str(kernel_path) if kernel_path.is_file() else "",
                 "modelnew": str(modelnew_path) if modelnew_path.is_file() else "",
                 "kernelagent_log": str(task_logs / "kernelagent.log"),
-                "kernelbench_log": str(task_logs / "kernelbench.log"),
+                "kernelagent_benchmark_log": str(task_logs / "kernelagent_benchmark.log"),
                 "kernelagent_result": str(agent_metadata_path),
-                "kernelbench_result": str(evaluation_path),
+                "kernelagent_benchmark_result": str(evaluation_path),
             },
         )
         result_path = task_artifacts / "task_result.json"

@@ -7,19 +7,19 @@ task flow.
 ## Memory write
 
 Write one task-level memory record only after the final candidate has passed
-the official KernelBench correctness check and benchmark. The project runner
-has the most complete verified view at that point: task ID/name, reference and
-best latency, speedup, generated kernel source, KernelAgent route/rounds, and
-KernelBench metadata. Keep failed generations and failed candidates as
-separate records with explicit error categories; never label an unverified
+the project-owned correctness check and benchmark. The project runner has the
+most complete verified view at that point: task ID/name, `torch.compile`
+reference and candidate latency, speedup, generated kernel source, KernelAgent
+route/rounds, and task metadata. Keep failed generations and failed candidates
+as separate records with explicit error categories; never label an unverified
 candidate as a successful memory.
 
 Within the existing optimization loop, `OptimizationManager.run_optimization()`
 and `OptimizationOrchestrator._finalize_results()` are the task-final hooks.
 `OptimizationManager._run_workers()` receives worker attempt/reflexion
 results. These are useful if memory needs within-run optimization events, but
-the outer KernelBench runner is the better initial write hook because it can
-attach the official task result.
+the outer task runner is the better initial write hook because it can attach
+the project-owned benchmark result.
 
 ## Memory retrieve
 
@@ -53,12 +53,13 @@ task features to support reliable retrieval across unrelated operators.
 
 ## Data still needed
 
-Future records should add versioned task characteristics (operator/shape/dtype,
-layout/strides, scalar parameters), KernelBench code hash/version, GPU identity
-and software versions, successful transformation tags and diagnosis, explicit
-failure category/error summary, correctness status, timing methodology, and
-provenance for each observation. Keep full kernel source/artifacts linked from
-the JSON record rather than duplicating unlimited code in one database.
+Future records should add versioned task characteristics
+(operator/shape/dtype, layout/strides, scalar parameters), KernelBench
+task-file hash/version, GPU identity and software versions, successful
+transformation tags and diagnosis, explicit failure category/error summary,
+correctness status, timing methodology, and provenance for each observation.
+Keep full kernel source/artifacts linked from the JSON record rather than
+duplicating unlimited code in one database.
 
 Retrieval should filter for hardware/toolchain compatibility and task
 similarity, expose provenance and correctness status to the prompt, and cap

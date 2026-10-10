@@ -13,7 +13,8 @@ put it in the untracked `.env` file. If exporting a non-default variable for
 the Docker scripts, also set `KERNELAGENT_API_KEY_ENV` to that variable name.
 Never place the key value in the JSON config or Git.
 The example uses the Ampere target, physical GPU 0, one selected smoke task,
-five correctness trials, and 100 performance trials.
+five correctness trials, a 1000 ms `do_bench` warmup budget, and a 100 ms
+repetition budget. The evaluator compares against default `torch.compile`.
 
 ## First server sequence
 
@@ -33,9 +34,10 @@ A30 GPUs with compute capability 8.0 before evaluation.
 
 Inspect the single-task output under `runs/<experiment_name>/`: confirm
 `kernelagent_result.json` shows a successful generation, then inspect
-`kernelbench_result.json` and `task_result.json` for compilation, runtime,
-correctness, same-device reference latency, candidate latency, and speedup. A
-KernelAgent self-test pass alone does not establish KernelBench correctness.
+`kernelagent_benchmark_result.json` and `task_result.json` for compilation,
+runtime, correctness, `torch.compile` latency, candidate latency, and speedup.
+A KernelAgent self-test pass alone does not establish correctness against the
+task's reference `Model`.
 
 After the first task and a second representative task (for example, a
 parameterized convolution or reduction) pass, run the full local L1 baseline:
@@ -55,7 +57,8 @@ There is no automatic multi-GPU task scheduler in this phase.
   and Triton wheels compile for `sm_80`.
 - Verify the generated `ModelNew` adapter on an elementwise task and on tasks
   with initialized module parameters and non-default scalar arguments.
-- Confirm KernelBench correctness, timing, and timeout records before running
-  the full 100-task batch.
+- Confirm the project-owned correctness, `do_bench` timing, and timeout records
+  before running the full 100-task batch. KernelBench is the task set; the
+  runner does not use its `eval.py` evaluator.
 - Save the exact image tag, driver output, model ID, endpoint, seed, and run
   artifacts for the baseline.

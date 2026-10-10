@@ -15,7 +15,7 @@ class TaskResult:
     runtime_success: bool | None
     correct: bool | None
     baseline_latency_ms: float | None
-    best_latency_ms: float | None
+    candidate_latency_ms: float | None
     speedup: float | None
     iterations: int | None
     candidate_count: int | None
@@ -26,7 +26,7 @@ class TaskResult:
     error: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
     artifacts: dict[str, str] = field(default_factory=dict)
-    schema_version: int = 1
+    schema_version: int = 2
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

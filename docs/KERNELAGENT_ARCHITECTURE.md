@@ -61,21 +61,18 @@ descriptions. With `--verify`, the result is executed by `Fuser/runner.py` and
 can be refined when verification fails. The final program and composition
 summary are written under the Fuser run directory.
 
-KernelAgent already accepts KernelBench problem files and can internally test
-against their model code. It does not currently call KernelBench's official
-`eval_kernel_against_ref()` API or emit KernelBench latency and correctness
-records. The planned integration should reuse `AutoKernelRouter` and add the
-official evaluator call around its returned kernel, rather than rebuilding
-kernel generation.
-
-The implemented `kernelbench_runner/` follows that boundary: it calls
-`AutoKernelRouter`, adapts `kernel_function(...)` to `ModelNew`, and runs the
-official KernelBench evaluator in a separate process with a per-task timeout.
-It records upstream artifacts and results without changing either project's
-correctness evaluator. A configured `OPENAI_BASE_URL` selects the
-OpenAI-compatible provider for custom model IDs; the runner copies the API key
-from the configured environment-variable name into `OPENAI_API_KEY` only in
-the child process environment.
+KernelAgent accepts KernelBench problem files as task definitions. The
+implemented `kernelbench_runner/` calls `AutoKernelRouter`, adapts
+`kernel_function(...)` to a `ModelNew` interface, and then performs its own
+correctness and performance evaluation in a separate process. It uses the
+task's `Model` and `get_inputs()` as reference/workload data, checks FP32
+correctness over deterministic trials, and times the candidate against
+default `torch.compile` with `triton.testing.do_bench`. It does not call
+`kernelbench.eval.eval_kernel_against_ref()` or use KernelBench timing code.
+A configured `OPENAI_BASE_URL` selects the OpenAI-compatible provider for
+custom model IDs; the runner copies the API key from the configured
+environment-variable name into `OPENAI_API_KEY` only in the child process
+environment.
 
 ## Hardware-guided optimization path
 

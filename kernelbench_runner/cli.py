@@ -26,11 +26,16 @@ def _parse_task_range(value: str) -> list[int]:
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Generate and officially evaluate selected KernelBench L1 tasks"
+        description=(
+            "Generate kernels for selected KernelBench L1 tasks and evaluate "
+            "them with KernelAgent's benchmark protocol"
+        )
     )
     parser.add_argument("--config", type=Path, help="JSON runner configuration")
     selection = parser.add_mutually_exclusive_group()
-    selection.add_argument("--task-id", type=int, action="append", help="L1 task ID; may repeat")
+    selection.add_argument(
+        "--task-id", type=int, action="append", help="L1 task ID; may repeat"
+    )
     selection.add_argument(
         "--task-range",
         type=_parse_task_range,
@@ -52,8 +57,8 @@ def _parser() -> argparse.ArgumentParser:
         "beam_width": ("--beam-width", int),
         "random_seed": ("--seed", int),
         "num_correct_trials": ("--num-correct-trials", int),
-        "num_perf_trials": ("--num-perf-trials", int),
-        "timing_method": ("--timing-method", str),
+        "benchmark_warmup_ms": ("--benchmark-warmup-ms", float),
+        "benchmark_rep_ms": ("--benchmark-rep-ms", float),
         "generation_timeout_s": ("--generation-timeout-s", int),
         "llm_timeout_s": ("--llm-timeout-s", int),
         "agent_test_timeout_s": ("--agent-test-timeout-s", int),
@@ -65,7 +70,7 @@ def _parser() -> argparse.ArgumentParser:
         "--gpu-arch",
         action="append",
         dest="gpu_arch",
-        help="KernelBench GPU architecture (repeatable; default: Ampere)",
+        help="Target GPU architecture for the generated kernel (repeatable)",
     )
     return parser
 

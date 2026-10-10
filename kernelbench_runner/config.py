@@ -1,11 +1,13 @@
-"""Configuration for reproducible KernelBench L1 runs."""
+"""Configuration for reproducible KernelAgent benchmark runs."""
 
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 import json
+import math
 import re
+import warnings
 from pathlib import Path
 from typing import Any
 
@@ -35,8 +37,8 @@ class RunnerConfig:
 
     random_seed: int = 42
     num_correct_trials: int = 5
-    num_perf_trials: int = 100
-    timing_method: str = "cuda_event"
+    benchmark_warmup_ms: float = 1000.0
+    benchmark_rep_ms: float = 100.0
     generation_timeout_s: int = 1800
     llm_timeout_s: int = 1200
     agent_test_timeout_s: int = 300
@@ -50,6 +52,23 @@ class RunnerConfig:
         data = json.loads(path.read_text(encoding="utf-8"))
         if not isinstance(data, dict):
             raise ValueError("Runner config must be a JSON object")
+        # Accept old config files without misreading trial counts as Triton's
+        # millisecond repetition budget. The new benchmark settings otherwise
+        # take their current defaults.
+        legacy_trials = data.pop("num_perf_trials", None)
+        legacy_timing = data.pop("timing_method", None)
+        if legacy_trials is not None or legacy_timing is not None:
+            warnings.warn(
+                "Ignoring legacy KernelBench timing settings; this run uses "
+                "triton.testing.do_bench. Set benchmark_warmup_ms and "
+                "benchmark_rep_ms to configure the current protocol.",
+                stacklevel=2,
+            )
+        if legacy_timing not in (None, "cuda_event", "do_bench"):
+            raise ValueError(
+                "Legacy timing_method must be cuda_event or do_bench; "
+                "the current evaluator uses triton.testing.do_bench"
+            )
         allowed = set(cls.__dataclass_fields__)
         unknown = sorted(set(data) - allowed)
         if unknown:
@@ -74,8 +93,15 @@ class RunnerConfig:
             raise ValueError("candidate_count must be between 1 and cpu_worker_limit")
         if self.search_budget < 1 or self.beam_width < 1:
             raise ValueError("search_budget and beam_width must be positive")
-        if self.num_correct_trials < 1 or self.num_perf_trials < 1:
-            raise ValueError("correctness and performance trial counts must be positive")
+        if self.num_correct_trials < 1:
+            raise ValueError("correctness trial count must be positive")
+        if (
+            not math.isfinite(self.benchmark_warmup_ms)
+            or not math.isfinite(self.benchmark_rep_ms)
+            or self.benchmark_warmup_ms <= 0
+            or self.benchmark_rep_ms <= 0
+        ):
+            raise ValueError("benchmark warmup and repetition budgets must be positive")
         if any(
             value < 1
             for value in (
