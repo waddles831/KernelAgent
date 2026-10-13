@@ -933,9 +933,19 @@ class OptimizationOrchestrator:
         self.logger.info(f"[{round_num}] Generating optimized kernel...")
         try:
             messages = [{"role": "user", "content": opt_prompt}]
+            # Request up to the provider's declared limit: for reasoning models
+            # (e.g. deepseek-flash) the chain-of-thought counts against the
+            # completion budget, and a lower cap can yield an empty reply.
+            max_tokens = 24576
+            try:
+                max_tokens = max(
+                    max_tokens, int(self.provider.get_max_tokens_limit(self.model))
+                )
+            except Exception:
+                pass
             response_text = self.verification_worker._call_llm(
                 messages,
-                max_tokens=24576,
+                max_tokens=max_tokens,
             )
 
             # Save response

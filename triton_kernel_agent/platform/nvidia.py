@@ -555,6 +555,11 @@ class NvidiaRooflineAnalyzer(RooflineAnalyzerBase):
     def analyze(self, ncu_metrics: dict[str, Any]) -> Any:
         return self._get_delegate().analyze(ncu_metrics)
 
+    @property
+    def config(self) -> Any:
+        # The orchestrator reads ``roofline_analyzer.config.early_stop``.
+        return self._get_delegate().config
+
     def should_stop(self, result: Any) -> tuple[bool, str]:
         return self._get_delegate().should_stop(result)
 

@@ -177,6 +177,14 @@ class NoOpProfiler(KernelProfilerBase):
 class NoOpRooflineAnalyzer(RooflineAnalyzerBase):
     """Reports zero efficiency and always signals stop."""
 
+    @property
+    def config(self) -> Any:
+        from kernel_perf_agent.kernel_opt.roofline.ncu_roofline import (
+            RooflineConfig,
+        )
+
+        return RooflineConfig()
+
     def analyze(self, ncu_metrics: dict[str, Any]) -> RooflineResult:
         return RooflineResult()
 
